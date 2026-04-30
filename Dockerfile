@@ -33,8 +33,12 @@ RUN OLLAMA_VERSION=$(curl -s https://api.github.com/repos/ollama/ollama/releases
 # Install GitHub Copilot CLI
 RUN npm install -g @github/copilot
 
-# Environment variables for BYOK (Ollama local)
-ENV COPILOT_PROVIDER_BASE_URL=http://localhost:11434/v1
+# Pre-pull the model during image build so runtime never needs internet access.
+# 'ollama serve' must be running for 'ollama pull' to work; kill it after.
+RUN ollama serve & \
+    sleep 3 && \
+    ollama pull qwen2.5-coder:1.5b && \
+    pkill ollama || true
 ENV COPILOT_MODEL=qwen2.5-coder:1.5b
 ENV COPILOT_OFFLINE=true
 ENV OLLAMA_HOST=0.0.0.0

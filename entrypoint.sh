@@ -31,9 +31,9 @@ if [[ "$READY" != "true" ]]; then
 fi
 log "Ollama is ready."
 
-# --- Pull model ---
-log "Pulling model: ${BASE_MODEL} ..."
-ollama pull "${BASE_MODEL}"
+# --- Pull model (no-op if already baked into Docker image) ---
+log "Verifying model ${BASE_MODEL} is present..."
+ollama pull "${BASE_MODEL}" || log "Pull skipped or failed — model should already be in image."
 
 # --- Create a context-limited model to speed up CPU inference ---
 # Copilot CLI's built-in system prompt alone exceeds 10,000 tokens, making it
