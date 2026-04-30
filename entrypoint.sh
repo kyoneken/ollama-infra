@@ -91,7 +91,7 @@ FILE|LINE|SEVERITY|ISSUE|FIX
 One line per issue. Be concise."
 
 cat > /tmp/review_stream.py << 'PYEOF'
-import urllib.request, json, sys
+import urllib.request, json, sys, os
 
 model  = sys.argv[1]
 prompt = sys.argv[2]
@@ -99,7 +99,11 @@ url    = 'http://localhost:11434/api/generate'
 body   = json.dumps({'model': model, 'prompt': prompt, 'stream': True}).encode()
 req    = urllib.request.Request(url, data=body,
                                 headers={'Content-Type': 'application/json'})
+
+print("[review_stream] Connecting to Ollama...", file=sys.stderr, flush=True)
+tokens_written = 0
 with urllib.request.urlopen(req) as resp:
+    print("[review_stream] Connected, reading stream...", file=sys.stderr, flush=True)
     for raw in resp:
         raw = raw.strip()
         if not raw:
@@ -107,12 +111,21 @@ with urllib.request.urlopen(req) as resp:
         try:
             d = json.loads(raw)
             token = d.get('response', '')
-            sys.stdout.write(token)
-            sys.stdout.flush()
+            if token:
+                os.write(1, token.encode('utf-8'))  # direct syscall, no buffering
+                tokens_written += 1
+                if tokens_written % 20 == 0:
+                    print(f"[review_stream] {tokens_written} tokens written",
+                          file=sys.stderr, flush=True)
             if d.get('done', False):
+                print(f"[review_stream] Done. Total tokens: {tokens_written}",
+                      file=sys.stderr, flush=True)
                 break
         except json.JSONDecodeError:
             pass
+
+print(f"[review_stream] Exiting. Tokens written: {tokens_written}",
+      file=sys.stderr, flush=True)
 PYEOF
 
 FULL_PROMPT="${SYSTEM_PROMPT}
