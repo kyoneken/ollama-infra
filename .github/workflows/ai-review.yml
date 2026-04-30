@@ -15,7 +15,7 @@ jobs:
     name: AI Code Review (Ollama)
     runs-on: ubuntu-latest
     # Model download can take a few minutes on first run
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository

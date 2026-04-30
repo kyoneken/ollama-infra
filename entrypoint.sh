@@ -57,23 +57,27 @@ Diff:
 $(cat "$DIFF_FILE")"
 
 log "Running Copilot code review..."
-REVIEW_TEXT=$(copilot \
+# Run in non-interactive mode with:
+#   --no-remote       : disable GitHub remote sessions
+#   --disable-builtin-mcps : disable GitHub MCP to avoid API calls
+#   --allow-all-tools : required for non-interactive -p mode
+#   --no-ask-user     : autonomous mode
+#   --excluded-tools shell : prevent multi-round shell execution
+#   -s                : silent (response only)
+#   timeout 900       : hard limit 15 min for CPU inference
+REVIEW_TEXT=$(timeout 900 copilot \
   -p "$PROMPT" \
   --agent code-reviewer \
-  --yolo \
-  --no-ask-user \
+  --allow-all-tools \
   --allow-all-paths \
+  --no-ask-user \
+  --no-remote \
+  --disable-builtin-mcps \
+  --excluded-tools "shell" \
   -s \
   2>&1) || {
   log "WARNING: copilot exited with non-zero status; capturing output anyway."
-  REVIEW_TEXT=$(copilot \
-    -p "$PROMPT" \
-    --agent code-reviewer \
-    --yolo \
-    --no-ask-user \
-    --allow-all-paths \
-    -s \
-    2>&1 || true)
+  REVIEW_TEXT="${REVIEW_TEXT:-copilot failed or timed out}"
 }
 
 # --- Write output ---
