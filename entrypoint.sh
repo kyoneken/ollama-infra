@@ -105,20 +105,23 @@ with open('/tmp/review_payload.json', 'w') as f:
 
 log "Payload written. Starting curl stream to file..."
 
-# Write the raw NDJSON stream directly to a file (-o bypasses all pipe buffering).
-# curl -m 115 caps the generation time; whatever was received is preserved even
-# if the model hasn't finished (partial output is fine for code review).
+# IMPORTANT: Use shell redirect (>) not curl -o.
+# With -o, curl uses stdio buffering which is lost on SIGALRM timeout.
+# Shell redirect inherits fd 1; curl's -N flushes to the kernel on each chunk.
+touch /tmp/raw_stream.ndjson  # ensure file exists even if curl fails immediately
+CURL_EXIT=0
 curl -s -N -m 115 \
   -X POST http://localhost:11434/api/generate \
   -H 'Content-Type: application/json' \
   --data @/tmp/review_payload.json \
-  -o /tmp/raw_stream.ndjson || true
+  > /tmp/raw_stream.ndjson 2>/tmp/curl_err.txt || CURL_EXIT=$?
 
-RAW_SIZE=$(wc -c < /tmp/raw_stream.ndjson 2>/dev/null || echo 0)
-log "Raw NDJSON stream: ${RAW_SIZE} bytes"
-# Log first 300 chars for debugging
-head -c 300 /tmp/raw_stream.ndjson | cat || true
-echo ""
+log "curl exit: ${CURL_EXIT}, stream size: $(wc -c < /tmp/raw_stream.ndjson) bytes"
+if [[ -s /tmp/curl_err.txt ]]; then
+  log "curl stderr: $(cat /tmp/curl_err.txt)"
+fi
+# Show first 300 bytes of raw stream for debugging
+log "Stream head: $(head -c 300 /tmp/raw_stream.ndjson | tr -d '\n')"
 
 # Extract .response tokens from the NDJSON stream
 python3 - << 'PYEOF' > /tmp/review_partial.txt
