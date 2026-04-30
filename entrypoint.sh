@@ -4,7 +4,8 @@ set -euo pipefail
 REVIEW_OUTPUT="${REVIEW_OUTPUT:-/tmp/review.txt}"
 DIFF_FILE="/tmp/pr.diff"
 # Use COPILOT_MODEL env var if set; fall back to default
-MODEL="${COPILOT_MODEL:-qwen2.5-coder:1.5b}"
+BASE_MODEL="${COPILOT_MODEL:-qwen2.5-coder:1.5b}"
+REVIEW_MODEL="qwen-reviewer"
 
 log() { echo "[entrypoint] $*"; }
 
@@ -31,20 +32,19 @@ fi
 log "Ollama is ready."
 
 # --- Pull model ---
-log "Pulling model: ${MODEL} ..."
-ollama pull "${MODEL}"
+log "Pulling model: ${BASE_MODEL} ..."
+ollama pull "${BASE_MODEL}"
 
-# --- Create a context-limited variant to speed up CPU inference ---
-# Default Ollama num_ctx is 4096; halving to 2048 cuts inference time ~in half.
-# At ~30 tok/s prefill on 2-core CPU: 2048 tokens ≈ 70s vs 140s for 4096.
-log "Creating context-limited model 'qwen-reviewer' (num_ctx 2048)..."
-cat > /tmp/Modelfile <<'EOF'
-FROM qwen2.5-coder:1.5b
-PARAMETER num_ctx 2048
+# --- Create a context-limited model to speed up CPU inference ---
+# Copilot CLI's built-in system prompt alone exceeds 10,000 tokens, making it
+# incompatible with small context windows. We call the Ollama API directly to
+# keep the total prompt small (~400 tokens) and inference fast (~30s on CPU).
+log "Creating context-limited model '${REVIEW_MODEL}' (num_ctx 4096)..."
+cat > /tmp/Modelfile <<EOF
+FROM ${BASE_MODEL}
+PARAMETER num_ctx 4096
 EOF
-ollama create qwen-reviewer -f /tmp/Modelfile
-MODEL=qwen-reviewer
-export COPILOT_MODEL=qwen-reviewer
+ollama create "${REVIEW_MODEL}" -f /tmp/Modelfile
 
 # --- Resolve diff input ---
 if [[ -n "${PR_DIFF:-}" ]]; then
@@ -64,47 +64,67 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true
 fi
 
-# --- Truncate diff to prevent context overflow ---
-# With num_ctx=2048 and agent system prompt overhead (~500 tokens),
-# limit diff to ~1500 chars (~375 tokens) to stay within context window.
+# --- Truncate diff ---
+# Keep under ~2000 chars (~500 tokens) so total prompt stays well within 4096
 MAX_DIFF_CHARS=2000
 DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
 DIFF_LEN=$(wc -c < "${DIFF_FILE}")
 if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
   DIFF_CONTENT="${DIFF_CONTENT}
-[... diff truncated at ${MAX_DIFF_CHARS} chars — only showing start of diff ...]"
+[... diff truncated at ${MAX_DIFF_CHARS} chars ...]"
   log "Diff truncated from ${DIFF_LEN} chars to ${MAX_DIFF_CHARS} chars."
 fi
 
-# --- Run Copilot code review ---
-PROMPT="You are a code reviewer. Review the following diff and report: typos in identifiers/strings/comments, simple logic errors (off-by-one, null checks, missing returns), and discrepancies between comments and code. For each issue output: FILE, LINE, SEVERITY, DESCRIPTION, SUGGESTION.
+# --- Run code review via Ollama API directly ---
+# Copilot CLI's built-in system prompt is ~10,000+ tokens which exceeds the
+# model context window, making it unusable for CPU inference in CI.
+# We call Ollama's OpenAI-compatible API directly to control prompt size.
+log "Running code review via Ollama API..."
 
-Diff:
-${DIFF_CONTENT}"
+SYSTEM_PROMPT="You are a code reviewer. Review the diff and report issues under these categories:
+1. Typos in identifiers, strings, or comments
+2. Simple logic errors (off-by-one, missing null checks, missing return values)
+3. Discrepancies between comments and actual code behavior
+For each issue output one line: FILE | LINE | SEVERITY | DESCRIPTION | SUGGESTION
+If no issues found, output: No issues found."
 
-log "Running Copilot code review..."
-# Non-interactive flags:
-#   --allow-all-tools : required for -p non-interactive mode
-#   --no-ask-user     : autonomous mode
-#   --no-remote       : disable GitHub remote session tracking
-#   --disable-builtin-mcps : skip GitHub MCP API calls
-#   --excluded-tools shell : prevent multi-round shell execution that causes timeout
-#   -s                : silent (response only, no stats)
-#   timeout 240       : hard limit 4 min (under Copilot CLI's 5-min HTTP timeout)
-REVIEW_TEXT=$(timeout 240 copilot \
-  -p "$PROMPT" \
-  --agent code-reviewer \
-  --allow-all-tools \
-  --allow-all-paths \
-  --no-ask-user \
-  --no-remote \
-  --disable-builtin-mcps \
-  --excluded-tools "shell" \
-  -s \
-  2>&1) || {
-  log "WARNING: copilot exited with non-zero status; capturing output anyway."
-  REVIEW_TEXT="${REVIEW_TEXT:-copilot failed or timed out}"
+REQUEST_BODY=$(python3 -c "
+import json, sys
+body = {
+    'model': '${REVIEW_MODEL}',
+    'messages': [
+        {'role': 'system', 'content': sys.argv[1]},
+        {'role': 'user', 'content': 'Review this diff:\n\n' + sys.argv[2]}
+    ],
+    'stream': False
 }
+print(json.dumps(body))
+" "$SYSTEM_PROMPT" "$DIFF_CONTENT")
+
+RESPONSE=$(timeout 120 curl -sf \
+  http://localhost:11434/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d "$REQUEST_BODY" 2>&1) || {
+  log "WARNING: Ollama API call failed or timed out."
+  RESPONSE=""
+}
+
+if [[ -n "$RESPONSE" ]]; then
+  REVIEW_TEXT=$(echo "$RESPONSE" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(data['choices'][0]['message']['content'])
+except Exception as e:
+    print(f'Failed to parse response: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1) || {
+    log "WARNING: Failed to parse Ollama response."
+    REVIEW_TEXT="Failed to parse model response."
+  }
+else
+  REVIEW_TEXT="Code review timed out or Ollama API returned no response."
+fi
 
 # --- Write output ---
 printf '%s\n' "$REVIEW_TEXT" > "$REVIEW_OUTPUT"
