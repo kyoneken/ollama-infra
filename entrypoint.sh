@@ -101,7 +101,7 @@ body = {
 print(json.dumps(body))
 " "$SYSTEM_PROMPT" "$DIFF_CONTENT")
 
-RESPONSE=$(timeout 120 curl -sf \
+RESPONSE=$(timeout 300 curl -sf \
   http://localhost:11434/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d "$REQUEST_BODY" 2>&1) || {
