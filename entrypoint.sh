@@ -96,6 +96,7 @@ body = {
         {'role': 'system', 'content': sys.argv[1]},
         {'role': 'user', 'content': 'Review this diff:\n\n' + sys.argv[2]}
     ],
+    'max_tokens': 300,
     'stream': False
 }
 print(json.dumps(body))
