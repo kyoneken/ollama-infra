@@ -103,19 +103,43 @@ with open('/tmp/review_payload.json', 'w') as f:
     json.dump(payload, f)
 " "${REVIEW_MODEL}" "${FULL_PROMPT}"
 
-log "Payload written. Starting curl | jq stream..."
+log "Payload written. Starting curl stream to file..."
 
-# Stream: curl delivers chunks, jq --unbuffered flushes each .response token immediately.
-# timeout 120 covers the whole pipeline.
-timeout 120 bash -c '
-  curl -s -N -m 110 \
-    -X POST http://localhost:11434/api/generate \
-    -H "Content-Type: application/json" \
-    --data @/tmp/review_payload.json | \
-  jq -rj --unbuffered ".response // empty"
-' > /tmp/review_partial.txt 2>&1 || {
-  log "Review timed out at 120s; using partial output."
-}
+# Write the raw NDJSON stream directly to a file (-o bypasses all pipe buffering).
+# curl -m 115 caps the generation time; whatever was received is preserved even
+# if the model hasn't finished (partial output is fine for code review).
+curl -s -N -m 115 \
+  -X POST http://localhost:11434/api/generate \
+  -H 'Content-Type: application/json' \
+  --data @/tmp/review_payload.json \
+  -o /tmp/raw_stream.ndjson || true
+
+RAW_SIZE=$(wc -c < /tmp/raw_stream.ndjson 2>/dev/null || echo 0)
+log "Raw NDJSON stream: ${RAW_SIZE} bytes"
+# Log first 300 chars for debugging
+head -c 300 /tmp/raw_stream.ndjson | cat || true
+echo ""
+
+# Extract .response tokens from the NDJSON stream
+python3 - << 'PYEOF' > /tmp/review_partial.txt
+import json, sys
+try:
+    with open('/tmp/raw_stream.ndjson', 'rb') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+                t = d.get('response', '')
+                if t:
+                    sys.stdout.write(t)
+            except json.JSONDecodeError:
+                pass
+except Exception as e:
+    sys.stderr.write(f'[parse] error: {e}\n')
+PYEOF
+
 log "Streaming done. Output: $(wc -c < /tmp/review_partial.txt 2>/dev/null || echo 0) bytes"
 
 REVIEW_TEXT=$(cat /tmp/review_partial.txt 2>/dev/null || echo "")
