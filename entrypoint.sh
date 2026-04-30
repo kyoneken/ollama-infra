@@ -65,8 +65,8 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # --- Truncate diff ---
-# Keep under ~2000 chars (~500 tokens) so total prompt stays well within 4096
-MAX_DIFF_CHARS=2000
+# Keep under ~500 chars (~125 tokens) so prefill stays under ~30s on 2 vCPU
+MAX_DIFF_CHARS=500
 DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
 DIFF_LEN=$(wc -c < "${DIFF_FILE}")
 if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
@@ -119,9 +119,9 @@ log "Test head: $(head -c 200 /tmp/test_response.json | tr -d '\n')"
 # --- Main review request: stream:false with short output ---
 # Prefill (~5s) + 80 tokens at ~1tok/s = ~85s total. curl -m 120 gives margin.
 # stream:false avoids all server-side streaming/flushing concerns.
-log "Starting review (stream:false, num_predict:80, timeout 120s)..."
+log "Starting review (stream:false, num_predict:80, timeout 240s)..."
 CURL_EXIT=0
-curl -s -m 120 \
+curl -s -m 240 \
   -X POST http://localhost:11434/api/generate \
   -H 'Content-Type: application/json' \
   --data @/tmp/review_payload.json \
