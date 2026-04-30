@@ -78,64 +78,45 @@ fi
 # --- Run code review via Ollama API directly ---
 # Copilot CLI's built-in system prompt is ~10,000+ tokens which exceeds the
 # model context window, making it unusable for CPU inference in CI.
-# We call Ollama's OpenAI-compatible API directly to control prompt size.
-# --- Run code review via streaming Ollama API ---
-# 'ollama run' buffers stdout internally and discards it on SIGTERM.
-# Instead, we use a Python script that reads Ollama's streaming /api/generate
-# response token by token, flushing each write to the output file.
-# This preserves partial output when timeout kills the process.
-log "Running streaming code review (timeout 120s)..."
+# curl handles HTTP chunked streaming natively; jq --unbuffered extracts tokens
+# and flushes each one immediately, eliminating all Python buffering issues.
+log "Running streaming code review (120s timeout)..."
 
 SYSTEM_PROMPT="Review this diff. For each bug, typo, or comment mismatch output:
 FILE|LINE|SEVERITY|ISSUE|FIX
 One line per issue. Be concise."
 
-cat > /tmp/review_stream.py << 'PYEOF'
-import urllib.request, json, sys, os
-
-model  = sys.argv[1]
-prompt = sys.argv[2]
-url    = 'http://localhost:11434/api/generate'
-body   = json.dumps({'model': model, 'prompt': prompt, 'stream': True}).encode()
-req    = urllib.request.Request(url, data=body,
-                                headers={'Content-Type': 'application/json'})
-
-print("[review_stream] Connecting to Ollama...", file=sys.stderr, flush=True)
-tokens_written = 0
-with urllib.request.urlopen(req) as resp:
-    print("[review_stream] Connected, reading stream...", file=sys.stderr, flush=True)
-    for raw in resp:
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            d = json.loads(raw)
-            token = d.get('response', '')
-            if token:
-                os.write(1, token.encode('utf-8'))  # direct syscall, no buffering
-                tokens_written += 1
-                if tokens_written % 20 == 0:
-                    print(f"[review_stream] {tokens_written} tokens written",
-                          file=sys.stderr, flush=True)
-            if d.get('done', False):
-                print(f"[review_stream] Done. Total tokens: {tokens_written}",
-                      file=sys.stderr, flush=True)
-                break
-        except json.JSONDecodeError:
-            pass
-
-print(f"[review_stream] Exiting. Tokens written: {tokens_written}",
-      file=sys.stderr, flush=True)
-PYEOF
-
 FULL_PROMPT="${SYSTEM_PROMPT}
 
 ${DIFF_CONTENT}"
 
-timeout 120 python3 -u /tmp/review_stream.py "${REVIEW_MODEL}" "$FULL_PROMPT" \
-  > /tmp/review_partial.txt 2>/dev/null || {
+# Build JSON payload — use Python to properly escape prompt content
+python3 -c "
+import json, sys
+payload = {
+    'model': sys.argv[1],
+    'prompt': sys.argv[2],
+    'stream': True,
+    'options': {'num_predict': 400}
+}
+with open('/tmp/review_payload.json', 'w') as f:
+    json.dump(payload, f)
+" "${REVIEW_MODEL}" "${FULL_PROMPT}"
+
+log "Payload written. Starting curl | jq stream..."
+
+# Stream: curl delivers chunks, jq --unbuffered flushes each .response token immediately.
+# timeout 120 covers the whole pipeline.
+timeout 120 bash -c '
+  curl -s -N -m 110 \
+    -X POST http://localhost:11434/api/generate \
+    -H "Content-Type: application/json" \
+    --data @/tmp/review_payload.json | \
+  jq -rj --unbuffered ".response // empty"
+' > /tmp/review_partial.txt 2>&1 || {
   log "Review timed out at 120s; using partial output."
 }
+log "Streaming done. Output: $(wc -c < /tmp/review_partial.txt 2>/dev/null || echo 0) bytes"
 
 REVIEW_TEXT=$(cat /tmp/review_partial.txt 2>/dev/null || echo "")
 if [[ -z "$REVIEW_TEXT" ]]; then
