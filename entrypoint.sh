@@ -65,9 +65,10 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # --- Truncate diff ---
-# ~400 chars ≈ 100 tokens. With ~60 token system prompt = ~160 token prefill.
-# At ~1 tok/s on 2 vCPU: 160s prefill + 200s generation = 360s < 480s budget.
-MAX_DIFF_CHARS=400
+# ~800 chars ≈ 200 tokens. With ~60 token system prompt = ~260 token prefill.
+# At ~0.8 tok/s on 2 vCPU: 260s prefill + 200s generation + 30s load = ~490s.
+# Use 480s timeout for ~90s safety margin.
+MAX_DIFF_CHARS=800
 DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
 DIFF_LEN=$(wc -c < "${DIFF_FILE}")
 if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
