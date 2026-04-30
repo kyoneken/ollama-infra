@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     git \
     jq \
+    zstd \
     ca-certificates \
     gnupg \
     lsb-release \
@@ -21,9 +22,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Ollama binary only (CPU-only, no CUDA/ROCm — keeps image small for CI)
-RUN curl -L https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64 \
-    -o /usr/local/bin/ollama \
-    && chmod +x /usr/local/bin/ollama
+# The release format changed to .tar.zst; extract only the binary
+RUN OLLAMA_VERSION=$(curl -s https://api.github.com/repos/ollama/ollama/releases/latest \
+    | jq -r '.tag_name') \
+    && curl -fsSL "https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/ollama-linux-amd64.tar.zst" \
+    | zstd -d | tar -x -C /tmp bin/ollama \
+    && install -m 755 /tmp/bin/ollama /usr/local/bin/ollama \
+    && rm -rf /tmp/bin
 
 # Install GitHub Copilot CLI
 RUN npm install -g @github/copilot
