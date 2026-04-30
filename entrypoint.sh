@@ -57,9 +57,23 @@ Diff:
 $(cat "$DIFF_FILE")"
 
 log "Running Copilot code review..."
-REVIEW_TEXT=$(copilot --yes -p "$PROMPT" 2>&1) || {
+REVIEW_TEXT=$(copilot \
+  -p "$PROMPT" \
+  --agent code-reviewer \
+  --yolo \
+  --no-ask-user \
+  --allow-all-paths \
+  -s \
+  2>&1) || {
   log "WARNING: copilot exited with non-zero status; capturing output anyway."
-  REVIEW_TEXT=$(copilot --yes -p "$PROMPT" 2>&1 || true)
+  REVIEW_TEXT=$(copilot \
+    -p "$PROMPT" \
+    --agent code-reviewer \
+    --yolo \
+    --no-ask-user \
+    --allow-all-paths \
+    -s \
+    2>&1 || true)
 }
 
 # --- Write output ---
