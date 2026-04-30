@@ -81,7 +81,7 @@ fi
 # model context window, making it unusable for CPU inference in CI.
 # stream:true — Ollama sends each token as it's generated via NDJSON; we
 # capture partial output even if the curl timeout fires before generation ends.
-log "Running code review (stream:true, num_predict:80, timeout 240s)..."
+log "Running code review (stream:true, num_predict:200, timeout 480s)..."
 
 SYSTEM_PROMPT="Review this diff. For each bug, typo, or comment mismatch output:
 FILE|LINE|SEVERITY|ISSUE|FIX
@@ -98,7 +98,7 @@ payload = {
     'model': sys.argv[1],
     'prompt': sys.argv[2],
     'stream': True,
-    'options': {'num_predict': 80}
+    'options': {'num_predict': 200}
 }
 with open('/tmp/review_payload.json', 'w') as f:
     json.dump(payload, f)
@@ -109,9 +109,9 @@ log "Payload written."
 # --- Main review request: stream:true ---
 # Ollama sends NDJSON: {"response":"token","done":false}\n per token.
 # -N disables curl's output buffering so each chunk reaches the file immediately.
-log "Starting review (stream:true, num_predict:80, timeout 240s)..."
+log "Starting review (stream:true, num_predict:200, timeout 480s)..."
 CURL_EXIT=0
-curl -s -N -m 240 \
+curl -s -N -m 480 \
   -X POST http://localhost:11434/api/generate \
   -H 'Content-Type: application/json' \
   --data @/tmp/review_payload.json \
