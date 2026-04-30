@@ -3,6 +3,8 @@ set -euo pipefail
 
 REVIEW_OUTPUT="${REVIEW_OUTPUT:-/tmp/review.txt}"
 DIFF_FILE="/tmp/pr.diff"
+# Use COPILOT_MODEL env var if set; fall back to default
+MODEL="${COPILOT_MODEL:-qwen2.5-coder:1.5b}"
 
 log() { echo "[entrypoint] $*"; }
 
@@ -29,8 +31,8 @@ fi
 log "Ollama is ready."
 
 # --- Pull model ---
-log "Pulling model: qwen2.5-coder:7b ..."
-ollama pull qwen2.5-coder:7b
+log "Pulling model: ${MODEL} ..."
+ollama pull "${MODEL}"
 
 # --- Resolve diff input ---
 if [[ -n "${PR_DIFF:-}" ]]; then
@@ -50,22 +52,33 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true
 fi
 
+# --- Truncate diff to prevent context overflow ---
+# Limit to ~8000 chars (~2000 tokens) to stay well within model context window
+MAX_DIFF_CHARS=8000
+DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
+DIFF_LEN=$(wc -c < "${DIFF_FILE}")
+if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
+  DIFF_CONTENT="${DIFF_CONTENT}
+[... diff truncated at ${MAX_DIFF_CHARS} chars — only showing start of diff ...]"
+  log "Diff truncated from ${DIFF_LEN} chars to ${MAX_DIFF_CHARS} chars."
+fi
+
 # --- Run Copilot code review ---
 PROMPT="You are a code reviewer. Review the following diff and report: typos in identifiers/strings/comments, simple logic errors (off-by-one, null checks, missing returns), and discrepancies between comments and code. For each issue output: FILE, LINE, SEVERITY, DESCRIPTION, SUGGESTION.
 
 Diff:
-$(cat "$DIFF_FILE")"
+${DIFF_CONTENT}"
 
 log "Running Copilot code review..."
-# Run in non-interactive mode with:
-#   --no-remote       : disable GitHub remote sessions
-#   --disable-builtin-mcps : disable GitHub MCP to avoid API calls
-#   --allow-all-tools : required for non-interactive -p mode
+# Non-interactive flags:
+#   --allow-all-tools : required for -p non-interactive mode
 #   --no-ask-user     : autonomous mode
-#   --excluded-tools shell : prevent multi-round shell execution
-#   -s                : silent (response only)
-#   timeout 900       : hard limit 15 min for CPU inference
-REVIEW_TEXT=$(timeout 900 copilot \
+#   --no-remote       : disable GitHub remote session tracking
+#   --disable-builtin-mcps : skip GitHub MCP API calls
+#   --excluded-tools shell : prevent multi-round shell execution that causes timeout
+#   -s                : silent (response only, no stats)
+#   timeout 240       : hard limit 4 min (under Copilot CLI's 5-min HTTP timeout)
+REVIEW_TEXT=$(timeout 240 copilot \
   -p "$PROMPT" \
   --agent code-reviewer \
   --allow-all-tools \

@@ -35,7 +35,7 @@ RUN npm install -g @github/copilot
 
 # Environment variables for BYOK (Ollama local)
 ENV COPILOT_PROVIDER_BASE_URL=http://localhost:11434/v1
-ENV COPILOT_MODEL=qwen2.5-coder:7b
+ENV COPILOT_MODEL=qwen2.5-coder:1.5b
 ENV COPILOT_OFFLINE=true
 ENV OLLAMA_HOST=0.0.0.0
 
