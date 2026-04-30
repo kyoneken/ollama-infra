@@ -120,7 +120,6 @@ curl -s -N -m 480 \
 
 log "Review curl exit: ${CURL_EXIT}, size: $(wc -c < /tmp/raw_stream.ndjson) bytes"
 [[ -s /tmp/curl_err.txt ]] && log "curl stderr: $(cat /tmp/curl_err.txt)"
-log "Stream head: $(head -c 200 /tmp/raw_stream.ndjson | tr -d '\n')"
 
 # Extract .response tokens from the NDJSON stream
 python3 - << 'PYEOF' > /tmp/review_partial.txt
