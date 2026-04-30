@@ -79,32 +79,49 @@ fi
 # Copilot CLI's built-in system prompt is ~10,000+ tokens which exceeds the
 # model context window, making it unusable for CPU inference in CI.
 # We call Ollama's OpenAI-compatible API directly to control prompt size.
-# --- Run code review via 'ollama run' streaming to file ---
-# The Ollama REST API waits for full completion before returning, which
-# takes 5+ minutes on CPU runners. 'ollama run' streams tokens to stdout
-# as they are generated, so redirecting to a file captures partial output
-# even when killed by timeout.
-log "Running code review via 'ollama run' (timeout 120s)..."
+# --- Run code review via streaming Ollama API ---
+# 'ollama run' buffers stdout internally and discards it on SIGTERM.
+# Instead, we use a Python script that reads Ollama's streaming /api/generate
+# response token by token, flushing each write to the output file.
+# This preserves partial output when timeout kills the process.
+log "Running streaming code review (timeout 120s)..."
 
-SYSTEM_PROMPT="You are a code reviewer. Report issues in this diff:
-1. Typos in identifiers, strings, or comments
-2. Logic errors (off-by-one, missing null checks, missing returns)
-3. Comment-code discrepancies
-Format each issue as: FILE | LINE | SEVERITY | DESCRIPTION | SUGGESTION
-Output 'No issues found.' if the diff is clean."
+SYSTEM_PROMPT="Review this diff. For each bug, typo, or comment mismatch output:
+FILE|LINE|SEVERITY|ISSUE|FIX
+One line per issue. Be concise."
 
-cat > /tmp/review_prompt.txt <<PROMPT
-${SYSTEM_PROMPT}
+cat > /tmp/review_stream.py << 'PYEOF'
+import urllib.request, json, sys
 
-Review this diff:
+model  = sys.argv[1]
+prompt = sys.argv[2]
+url    = 'http://localhost:11434/api/generate'
+body   = json.dumps({'model': model, 'prompt': prompt, 'stream': True}).encode()
+req    = urllib.request.Request(url, data=body,
+                                headers={'Content-Type': 'application/json'})
+with urllib.request.urlopen(req) as resp:
+    for raw in resp:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            d = json.loads(raw)
+            token = d.get('response', '')
+            sys.stdout.write(token)
+            sys.stdout.flush()
+            if d.get('done', False):
+                break
+        except json.JSONDecodeError:
+            pass
+PYEOF
 
-${DIFF_CONTENT}
-PROMPT
+FULL_PROMPT="${SYSTEM_PROMPT}
 
-timeout 120 ollama run "${REVIEW_MODEL}" --nowordwrap \
-  < /tmp/review_prompt.txt \
+${DIFF_CONTENT}"
+
+timeout 120 python3 -u /tmp/review_stream.py "${REVIEW_MODEL}" "$FULL_PROMPT" \
   > /tmp/review_partial.txt 2>/dev/null || {
-  log "ollama run timed out or exited non-zero; using partial output."
+  log "Review timed out at 120s; using partial output."
 }
 
 REVIEW_TEXT=$(cat /tmp/review_partial.txt 2>/dev/null || echo "")
