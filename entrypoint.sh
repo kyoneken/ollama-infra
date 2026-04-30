@@ -96,49 +96,57 @@ import json, sys
 payload = {
     'model': sys.argv[1],
     'prompt': sys.argv[2],
-    'stream': True,
-    'options': {'num_predict': 400}
+    'stream': False,
+    'options': {'num_predict': 80}
 }
 with open('/tmp/review_payload.json', 'w') as f:
     json.dump(payload, f)
 " "${REVIEW_MODEL}" "${FULL_PROMPT}"
 
-log "Payload written. Starting curl stream to file..."
+log "Payload written."
 
-# IMPORTANT: Use shell redirect (>) not curl -o.
-# With -o, curl uses stdio buffering which is lost on SIGALRM timeout.
-# Shell redirect inherits fd 1; curl's -N flushes to the kernel on each chunk.
-touch /tmp/raw_stream.ndjson  # ensure file exists even if curl fails immediately
+# --- Diagnostic: test that curl can receive data from Ollama at all ---
+log "Running connectivity test (stream:false, 5 tokens)..."
+CURL_TEST_EXIT=0
+curl -s -m 60 \
+  -X POST http://localhost:11434/api/generate \
+  -H 'Content-Type: application/json' \
+  -d "{\"model\":\"${REVIEW_MODEL}\",\"prompt\":\"say hi\",\"stream\":false,\"options\":{\"num_predict\":5}}" \
+  > /tmp/test_response.json 2>&1 || CURL_TEST_EXIT=$?
+log "Test curl exit: ${CURL_TEST_EXIT}, size: $(wc -c < /tmp/test_response.json) bytes"
+log "Test head: $(head -c 200 /tmp/test_response.json | tr -d '\n')"
+
+# --- Main review request: stream:false with short output ---
+# Prefill (~5s) + 80 tokens at ~1tok/s = ~85s total. curl -m 120 gives margin.
+# stream:false avoids all server-side streaming/flushing concerns.
+log "Starting review (stream:false, num_predict:80, timeout 120s)..."
 CURL_EXIT=0
-curl -s -N -m 115 \
+curl -s -m 120 \
   -X POST http://localhost:11434/api/generate \
   -H 'Content-Type: application/json' \
   --data @/tmp/review_payload.json \
-  > /tmp/raw_stream.ndjson 2>/tmp/curl_err.txt || CURL_EXIT=$?
+  > /tmp/raw_response.json 2>/tmp/curl_err.txt || CURL_EXIT=$?
 
-log "curl exit: ${CURL_EXIT}, stream size: $(wc -c < /tmp/raw_stream.ndjson) bytes"
-if [[ -s /tmp/curl_err.txt ]]; then
-  log "curl stderr: $(cat /tmp/curl_err.txt)"
-fi
-# Show first 300 bytes of raw stream for debugging
-log "Stream head: $(head -c 300 /tmp/raw_stream.ndjson | tr -d '\n')"
+log "Review curl exit: ${CURL_EXIT}, size: $(wc -c < /tmp/raw_response.json) bytes"
+[[ -s /tmp/curl_err.txt ]] && log "curl stderr: $(cat /tmp/curl_err.txt)"
+log "Response head: $(head -c 300 /tmp/raw_response.json | tr -d '\n')"
 
 # Extract .response tokens from the NDJSON stream
 python3 - << 'PYEOF' > /tmp/review_partial.txt
 import json, sys
 try:
-    with open('/tmp/raw_stream.ndjson', 'rb') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-                t = d.get('response', '')
-                if t:
-                    sys.stdout.write(t)
-            except json.JSONDecodeError:
-                pass
+    with open('/tmp/raw_response.json', 'rb') as f:
+        data = f.read()
+    if data:
+        d = json.loads(data)
+        # stream:false → single JSON object with 'response' field
+        t = d.get('response', '')
+        if t:
+            sys.stdout.write(t)
+        else:
+            sys.stderr.write(f'[parse] no response field, keys: {list(d.keys())}\n')
+    else:
+        sys.stderr.write('[parse] response file is empty\n')
 except Exception as e:
     sys.stderr.write(f'[parse] error: {e}\n')
 PYEOF
