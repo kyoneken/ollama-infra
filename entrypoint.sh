@@ -84,13 +84,16 @@ fi
 # capture partial output even if the curl timeout fires before generation ends.
 log "Running code review (stream:true, num_predict:200, timeout 480s)..."
 
-SYSTEM_PROMPT="Review this diff. For each bug, typo, or comment mismatch output:
+SYSTEM_PROMPT="You are a strict code reviewer. For each bug, typo, logic error, or comment mismatch in the diff below, output exactly one line per issue in this format:
 FILE|LINE|SEVERITY|ISSUE|FIX
-One line per issue. Be concise."
+SEVERITY must be ERROR, WARNING, or INFO. Output ONLY these lines, nothing else."
 
 FULL_PROMPT="${SYSTEM_PROMPT}
 
-${DIFF_CONTENT}"
+DIFF:
+${DIFF_CONTENT}
+
+REVIEW:"
 
 # Build JSON payload — use Python to properly escape prompt content
 python3 -c "
@@ -99,7 +102,7 @@ payload = {
     'model': sys.argv[1],
     'prompt': sys.argv[2],
     'stream': True,
-    'options': {'num_predict': 200}
+    'options': {'num_predict': 200, 'temperature': 0.1}
 }
 with open('/tmp/review_payload.json', 'w') as f:
     json.dump(payload, f)
