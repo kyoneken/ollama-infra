@@ -39,10 +39,10 @@ ollama pull "${BASE_MODEL}"
 # Copilot CLI's built-in system prompt alone exceeds 10,000 tokens, making it
 # incompatible with small context windows. We call the Ollama API directly to
 # keep the total prompt small (~400 tokens) and inference fast (~30s on CPU).
-log "Creating context-limited model '${REVIEW_MODEL}' (num_ctx 4096)..."
+log "Creating context-limited model '${REVIEW_MODEL}' (num_ctx 512)..."
 cat > /tmp/Modelfile <<EOF
 FROM ${BASE_MODEL}
-PARAMETER num_ctx 4096
+PARAMETER num_ctx 512
 EOF
 ollama create "${REVIEW_MODEL}" -f /tmp/Modelfile
 
