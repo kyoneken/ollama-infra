@@ -1,8 +1,8 @@
-FROM ollama/ollama:latest
+FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install base dependencies + GitHub CLI + Node.js 20
+# Install base dependencies + GitHub CLI + Node.js 20 in a single layer
 RUN apt-get update && apt-get install -y \
     curl \
     git \
@@ -19,6 +19,11 @@ RUN apt-get update && apt-get install -y \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Ollama binary only (CPU-only, no CUDA/ROCm — keeps image small for CI)
+RUN curl -L https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64 \
+    -o /usr/local/bin/ollama \
+    && chmod +x /usr/local/bin/ollama
 
 # Install GitHub Copilot CLI
 RUN npm install -g @github/copilot
