@@ -65,8 +65,9 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # --- Truncate diff ---
-# Keep under ~500 chars (~125 tokens) so prefill stays under ~30s on 2 vCPU
-MAX_DIFF_CHARS=500
+# Keep under ~250 chars (~65 tokens) so prefill + 80 generate = ~145 total tokens.
+# At ~1 tok/s on 2 vCPU, this gives ~145s well under the 240s curl timeout.
+MAX_DIFF_CHARS=250
 DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
 DIFF_LEN=$(wc -c < "${DIFF_FILE}")
 if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
@@ -78,9 +79,9 @@ fi
 # --- Run code review via Ollama API directly ---
 # Copilot CLI's built-in system prompt is ~10,000+ tokens which exceeds the
 # model context window, making it unusable for CPU inference in CI.
-# curl handles HTTP chunked streaming natively; jq --unbuffered extracts tokens
-# and flushes each one immediately, eliminating all Python buffering issues.
-log "Running streaming code review (120s timeout)..."
+# stream:true — Ollama sends each token as it's generated via NDJSON; we
+# capture partial output even if the curl timeout fires before generation ends.
+log "Running code review (stream:true, num_predict:80, timeout 240s)..."
 
 SYSTEM_PROMPT="Review this diff. For each bug, typo, or comment mismatch output:
 FILE|LINE|SEVERITY|ISSUE|FIX
@@ -96,7 +97,7 @@ import json, sys
 payload = {
     'model': sys.argv[1],
     'prompt': sys.argv[2],
-    'stream': False,
+    'stream': True,
     'options': {'num_predict': 80}
 }
 with open('/tmp/review_payload.json', 'w') as f:
@@ -105,48 +106,37 @@ with open('/tmp/review_payload.json', 'w') as f:
 
 log "Payload written."
 
-# --- Diagnostic: test that curl can receive data from Ollama at all ---
-log "Running connectivity test (stream:false, 5 tokens)..."
-CURL_TEST_EXIT=0
-curl -s -m 60 \
-  -X POST http://localhost:11434/api/generate \
-  -H 'Content-Type: application/json' \
-  -d "{\"model\":\"${REVIEW_MODEL}\",\"prompt\":\"say hi\",\"stream\":false,\"options\":{\"num_predict\":5}}" \
-  > /tmp/test_response.json 2>&1 || CURL_TEST_EXIT=$?
-log "Test curl exit: ${CURL_TEST_EXIT}, size: $(wc -c < /tmp/test_response.json) bytes"
-log "Test head: $(head -c 200 /tmp/test_response.json | tr -d '\n')"
-
-# --- Main review request: stream:false with short output ---
-# Prefill (~5s) + 80 tokens at ~1tok/s = ~85s total. curl -m 120 gives margin.
-# stream:false avoids all server-side streaming/flushing concerns.
-log "Starting review (stream:false, num_predict:80, timeout 240s)..."
+# --- Main review request: stream:true ---
+# Ollama sends NDJSON: {"response":"token","done":false}\n per token.
+# -N disables curl's output buffering so each chunk reaches the file immediately.
+log "Starting review (stream:true, num_predict:80, timeout 240s)..."
 CURL_EXIT=0
-curl -s -m 240 \
+curl -s -N -m 240 \
   -X POST http://localhost:11434/api/generate \
   -H 'Content-Type: application/json' \
   --data @/tmp/review_payload.json \
-  > /tmp/raw_response.json 2>/tmp/curl_err.txt || CURL_EXIT=$?
+  > /tmp/raw_stream.ndjson 2>/tmp/curl_err.txt || CURL_EXIT=$?
 
-log "Review curl exit: ${CURL_EXIT}, size: $(wc -c < /tmp/raw_response.json) bytes"
+log "Review curl exit: ${CURL_EXIT}, size: $(wc -c < /tmp/raw_stream.ndjson) bytes"
 [[ -s /tmp/curl_err.txt ]] && log "curl stderr: $(cat /tmp/curl_err.txt)"
-log "Response head: $(head -c 300 /tmp/raw_response.json | tr -d '\n')"
+log "Stream head: $(head -c 200 /tmp/raw_stream.ndjson | tr -d '\n')"
 
 # Extract .response tokens from the NDJSON stream
 python3 - << 'PYEOF' > /tmp/review_partial.txt
 import json, sys
 try:
-    with open('/tmp/raw_response.json', 'rb') as f:
-        data = f.read()
-    if data:
-        d = json.loads(data)
-        # stream:false → single JSON object with 'response' field
-        t = d.get('response', '')
-        if t:
-            sys.stdout.write(t)
-        else:
-            sys.stderr.write(f'[parse] no response field, keys: {list(d.keys())}\n')
-    else:
-        sys.stderr.write('[parse] response file is empty\n')
+    with open('/tmp/raw_stream.ndjson', 'rb') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+                t = d.get('response', '')
+                if t:
+                    sys.stdout.write(t)
+            except json.JSONDecodeError:
+                pass
 except Exception as e:
     sys.stderr.write(f'[parse] error: {e}\n')
 PYEOF
