@@ -25,7 +25,18 @@ jobs:
 
       - name: Generate PR diff
         run: |
-          git diff origin/${{ github.base_ref }}...HEAD > ${{ github.workspace }}/pr.diff
+          # Exclude infrastructure files; review only source code changes
+          git diff origin/${{ github.base_ref }}...HEAD -- \
+            ':(exclude)Dockerfile' \
+            ':(exclude)entrypoint.sh' \
+            ':(exclude).github/' \
+            ':(exclude)*.md' \
+            ':(exclude).copilot/' \
+            > ${{ github.workspace }}/pr.diff
+          # Fall back to full diff if the filtered diff is empty
+          if [[ ! -s ${{ github.workspace }}/pr.diff ]]; then
+            git diff origin/${{ github.base_ref }}...HEAD > ${{ github.workspace }}/pr.diff
+          fi
           echo "Diff size: $(wc -c < ${{ github.workspace }}/pr.diff) bytes"
 
       # Cache the Docker image layers to speed up subsequent runs
@@ -86,7 +97,7 @@ jobs:
               reviewText = '_No review output was produced._';
             }
 
-            const poweredBy = 'Powered by [Ollama](https://ollama.com) running `qwen2.5-coder:7b` inside this repo\'s Docker image.';
+            const poweredBy = `Powered by [Ollama](https://ollama.com) running \`qwen2.5-coder:1.5b\` inside this repo's Docker image.`;
             const warning = '⚠️ First run may take a few minutes while the model is downloaded inside the container.';
             const logsUrl = context.payload.pull_request
               ? `${context.payload.pull_request.html_url}/checks`

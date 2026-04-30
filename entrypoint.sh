@@ -34,6 +34,18 @@ log "Ollama is ready."
 log "Pulling model: ${MODEL} ..."
 ollama pull "${MODEL}"
 
+# --- Create a context-limited variant to speed up CPU inference ---
+# Default Ollama num_ctx is 4096; halving to 2048 cuts inference time ~in half.
+# At ~30 tok/s prefill on 2-core CPU: 2048 tokens ≈ 70s vs 140s for 4096.
+log "Creating context-limited model 'qwen-reviewer' (num_ctx 2048)..."
+cat > /tmp/Modelfile <<'EOF'
+FROM qwen2.5-coder:1.5b
+PARAMETER num_ctx 2048
+EOF
+ollama create qwen-reviewer -f /tmp/Modelfile
+MODEL=qwen-reviewer
+export COPILOT_MODEL=qwen-reviewer
+
 # --- Resolve diff input ---
 if [[ -n "${PR_DIFF:-}" ]]; then
   log "Writing PR_DIFF env var to ${DIFF_FILE}..."
@@ -53,8 +65,9 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # --- Truncate diff to prevent context overflow ---
-# Limit to ~8000 chars (~2000 tokens) to stay well within model context window
-MAX_DIFF_CHARS=8000
+# With num_ctx=2048 and agent system prompt overhead (~500 tokens),
+# limit diff to ~1500 chars (~375 tokens) to stay within context window.
+MAX_DIFF_CHARS=2000
 DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
 DIFF_LEN=$(wc -c < "${DIFF_FILE}")
 if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
