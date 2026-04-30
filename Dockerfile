@@ -33,12 +33,17 @@ RUN OLLAMA_VERSION=$(curl -s https://api.github.com/repos/ollama/ollama/releases
 # Install GitHub Copilot CLI
 RUN npm install -g @github/copilot
 
-# Pre-pull the model during image build so runtime never needs internet access.
-# 'ollama serve' must be running for 'ollama pull' to work; kill it after.
+# Pre-bake the model during image build so CI never needs internet access at runtime.
+# Wait up to 60s for ollama to become ready before pulling.
 RUN ollama serve & \
-    sleep 3 && \
+    OLLAMA_PID=$! && \
+    echo "Waiting for Ollama..." && \
+    for i in $(seq 1 60); do \
+      sleep 1 && curl -sf http://localhost:11434/ > /dev/null 2>&1 && echo "Ready after ${i}s" && break; \
+    done && \
     ollama pull qwen2.5-coder:1.5b && \
-    pkill ollama || true
+    echo "Model size: $(du -sh /root/.ollama/models)" && \
+    kill "$OLLAMA_PID" && wait "$OLLAMA_PID" 2>/dev/null || true
 ENV COPILOT_MODEL=qwen2.5-coder:1.5b
 ENV COPILOT_OFFLINE=true
 ENV OLLAMA_HOST=0.0.0.0

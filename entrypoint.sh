@@ -65,9 +65,9 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # --- Truncate diff ---
-# Keep under ~250 chars (~65 tokens) so prefill + 80 generate = ~145 total tokens.
-# At ~1 tok/s on 2 vCPU, this gives ~145s well under the 240s curl timeout.
-MAX_DIFF_CHARS=250
+# ~400 chars ≈ 100 tokens. With ~60 token system prompt = ~160 token prefill.
+# At ~1 tok/s on 2 vCPU: 160s prefill + 200s generation = 360s < 480s budget.
+MAX_DIFF_CHARS=400
 DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
 DIFF_LEN=$(wc -c < "${DIFF_FILE}")
 if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
