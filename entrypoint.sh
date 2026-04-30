@@ -79,52 +79,37 @@ fi
 # Copilot CLI's built-in system prompt is ~10,000+ tokens which exceeds the
 # model context window, making it unusable for CPU inference in CI.
 # We call Ollama's OpenAI-compatible API directly to control prompt size.
-log "Running code review via Ollama API..."
+# --- Run code review via 'ollama run' streaming to file ---
+# The Ollama REST API waits for full completion before returning, which
+# takes 5+ minutes on CPU runners. 'ollama run' streams tokens to stdout
+# as they are generated, so redirecting to a file captures partial output
+# even when killed by timeout.
+log "Running code review via 'ollama run' (timeout 120s)..."
 
-SYSTEM_PROMPT="You are a code reviewer. Review the diff and report issues under these categories:
+SYSTEM_PROMPT="You are a code reviewer. Report issues in this diff:
 1. Typos in identifiers, strings, or comments
-2. Simple logic errors (off-by-one, missing null checks, missing return values)
-3. Discrepancies between comments and actual code behavior
-For each issue output one line: FILE | LINE | SEVERITY | DESCRIPTION | SUGGESTION
-If no issues found, output: No issues found."
+2. Logic errors (off-by-one, missing null checks, missing returns)
+3. Comment-code discrepancies
+Format each issue as: FILE | LINE | SEVERITY | DESCRIPTION | SUGGESTION
+Output 'No issues found.' if the diff is clean."
 
-REQUEST_BODY=$(python3 -c "
-import json, sys
-body = {
-    'model': '${REVIEW_MODEL}',
-    'messages': [
-        {'role': 'system', 'content': sys.argv[1]},
-        {'role': 'user', 'content': 'Review this diff:\n\n' + sys.argv[2]}
-    ],
-    'max_tokens': 300,
-    'stream': False
-}
-print(json.dumps(body))
-" "$SYSTEM_PROMPT" "$DIFF_CONTENT")
+cat > /tmp/review_prompt.txt <<PROMPT
+${SYSTEM_PROMPT}
 
-RESPONSE=$(timeout 300 curl -sf \
-  http://localhost:11434/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d "$REQUEST_BODY" 2>&1) || {
-  log "WARNING: Ollama API call failed or timed out."
-  RESPONSE=""
+Review this diff:
+
+${DIFF_CONTENT}
+PROMPT
+
+timeout 120 ollama run "${REVIEW_MODEL}" --nowordwrap \
+  < /tmp/review_prompt.txt \
+  > /tmp/review_partial.txt 2>/dev/null || {
+  log "ollama run timed out or exited non-zero; using partial output."
 }
 
-if [[ -n "$RESPONSE" ]]; then
-  REVIEW_TEXT=$(echo "$RESPONSE" | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    print(data['choices'][0]['message']['content'])
-except Exception as e:
-    print(f'Failed to parse response: {e}', file=sys.stderr)
-    sys.exit(1)
-" 2>&1) || {
-    log "WARNING: Failed to parse Ollama response."
-    REVIEW_TEXT="Failed to parse model response."
-  }
-else
-  REVIEW_TEXT="Code review timed out or Ollama API returned no response."
+REVIEW_TEXT=$(cat /tmp/review_partial.txt 2>/dev/null || echo "")
+if [[ -z "$REVIEW_TEXT" ]]; then
+  REVIEW_TEXT="No review output generated (model may be too slow for CPU inference)."
 fi
 
 # --- Write output ---
