@@ -84,9 +84,9 @@ fi
 # capture partial output even if the curl timeout fires before generation ends.
 log "Running code review (stream:true, num_predict:200, timeout 480s)..."
 
-SYSTEM_PROMPT="You are a strict code reviewer. For each bug, typo, logic error, or comment mismatch in the diff below, output exactly one line per issue in this format:
+SYSTEM_PROMPT="あなたは厳格なコードレビュアーです。以下の差分にあるバグ・タイポ・ロジックエラー・コメント不一致を1件1行で出力してください。形式:
 FILE|LINE|SEVERITY|ISSUE|FIX
-SEVERITY must be ERROR, WARNING, or INFO. Output ONLY these lines, nothing else."
+SEVERITY は ERROR・WARNING・INFO のいずれか。この形式の行のみ出力し、それ以外は何も出力しないこと。"
 
 FULL_PROMPT="${SYSTEM_PROMPT}
 
