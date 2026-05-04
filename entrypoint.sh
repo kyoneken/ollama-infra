@@ -69,8 +69,10 @@ fi
 annotate_diff() {
   awk '
     /^@@/ {
-      match($0, /\+([0-9]+)/, arr)
-      newline = arr[1] - 1
+      tmp = $0
+      gsub(/.*\+/, "", tmp)
+      gsub(/[^0-9].*/, "", tmp)
+      newline = tmp + 0 - 1
       print; next
     }
     /^\+\+\+/ { print; next }
