@@ -64,10 +64,28 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true
 fi
 
+# --- Annotate diff with new-file line numbers so the AI can report accurate LINE values ---
+# Transforms each context/added line to "[  N] ..." so the AI reads the correct line number.
+annotate_diff() {
+  awk '
+    /^@@/ {
+      match($0, /\+([0-9]+)/, arr)
+      newline = arr[1] - 1
+      print; next
+    }
+    /^\+\+\+/ { print; next }
+    /^\+/ { newline++; printf "[%4d]+%s\n", newline, substr($0,2); next }
+    /^ /  { newline++; printf "[%4d] %s\n", newline, substr($0,2); next }
+    /^-/  { printf "      -%s\n", substr($0,2); next }
+    { print }
+  ' "$1"
+}
+
 # --- Truncate diff ---
 MAX_DIFF_CHARS=4000
-DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
-DIFF_LEN=$(wc -c < "${DIFF_FILE}")
+ANNOTATED_DIFF=$(annotate_diff "${DIFF_FILE}")
+DIFF_CONTENT=$(printf '%s' "$ANNOTATED_DIFF" | head -c "${MAX_DIFF_CHARS}")
+DIFF_LEN=$(printf '%s' "$ANNOTATED_DIFF" | wc -c)
 if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
   DIFF_CONTENT="${DIFF_CONTENT}
 [... diff truncated at ${MAX_DIFF_CHARS} chars ...]"
@@ -81,6 +99,9 @@ SYSTEM_PROMPT="You are a strict code reviewer. Check for ALL of the following:
 1. TYPOS: misspelled identifiers, strings, comments (e.g. recieve->receive, lenght->length)
 2. LOGIC: off-by-one, missing null/zero checks, wrong operators (- instead of +), unchecked errors
 3. COMMENT: docstring/comment says one thing but code does another
+
+The diff lines are annotated with [LINE_NUMBER] at the start.
+Use the [LINE_NUMBER] value as the LINE in your output.
 
 For each issue output exactly one line:
 FILE|LINE|SEVERITY|ISSUE|FIX|REASON_JA
