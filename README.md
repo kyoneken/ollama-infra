@@ -1,131 +1,118 @@
 # ollama-infra
 
-## Overview
+GitHub Actions でプルリクエストをローカル LLM で自動コードレビューする再利用可能なアクションです。外部の AI API キー不要で完全オフライン動作します。
 
-Automated AI code review on pull requests using a fully local LLM stack — no external AI API keys required.
+## 他のリポジトリからの利用方法
+
+`.github/workflows/ai-review.yml` を作成するだけで使えます：
+
+```yaml
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: kyoneken/ollama-infra@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # model: leave empty to use pre-installed qwen2.5-coder:1.5b
+```
+
+追加シークレット不要。`GITHUB_TOKEN` は Actions が自動提供します。
+
+## Action Inputs
+
+| Input | 必須 | デフォルト | 説明 |
+|---|---|---|---|
+| `github-token` | ✅ | — | PR コメント投稿用トークン |
+| `model` | ❌ | `""` | Ollama モデル名の上書き（省略時: pre-installed の `qwen2.5-coder:1.5b` を使用） |
+| `base-ref` | ❌ | `""` | diff 生成の基準ブランチ（省略時: `github.base_ref` を使用） |
+
+## 仕組み
 
 ```
-PR opened/updated
+PR オープン / 更新
       │
       ▼
 GitHub Actions (ubuntu-latest)
       │
       ▼
-Docker build (Ubuntu 22.04 + gh + Node.js + Copilot CLI + Ollama)
+kyoneken/ollama-infra@main (Composite Action)
+      │  ghcr.io/kyoneken/ollama-review:latest を pull
+      ▼
+ollama serve（モデルはイメージに pre-bake 済み、ダウンロード不要）
       │
       ▼
-ollama serve  ──►  pull qwen2.5-coder:7b
-      │
+Ollama REST API (/api/generate)
+      │  差分を最大 600 文字に切り詰めてプロンプト生成
+      │  stream:true でトークンを逐次受信
       ▼
-Copilot CLI  ──►  code-reviewer agent
-      │                 ├─ typo-checker
-      │                 ├─ logic-reviewer
-      │                 └─ comment-consistency
-      │
-      ▼
-Review output  ──►  PR comment (via github-script)
+レビュー結果 ──► PR コメントとして投稿
 ```
 
-## How It Works
+## モデルとパフォーマンス
 
-1. **Trigger**: Any PR `opened`, `synchronize`, or `reopened` event fires the `ai-review` workflow.
-2. **Diff generation**: `git diff origin/<base>...HEAD` is saved to `pr.diff`.
-3. **Docker build**: The image bundles Ubuntu 22.04, GitHub CLI, Node.js 20, `@github/copilot-cli`, and Ollama. Docker layer caching keeps rebuilds fast.
-4. **BYOK (Bring Your Own Key)**: The image is pre-configured with environment variables that point Copilot CLI at the local Ollama instance instead of GitHub's servers:
-   - `COPILOT_PROVIDER_BASE_URL=http://localhost:11434`
-   - `COPILOT_MODEL=qwen2.5-coder:7b`
-   - `COPILOT_OFFLINE=true`
-5. **Review**: `entrypoint.sh` starts Ollama, pulls the model, feeds the diff to Copilot CLI, and writes the output to `review_output.txt`.
-6. **Comment**: A `github-script` step reads the file and posts it as a PR comment.
-
-## Skills
-
-| Skill | What it checks |
+| 項目 | 値 |
 |---|---|
-| **typo-checker** | Spelling mistakes in identifiers, string literals, comments, and parameter names. Conservative — only flags high-confidence typos. |
-| **logic-reviewer** | Off-by-one errors, missing null/nil checks, control flow bugs (unreachable code, missing returns), operator mistakes, and unchecked errors. |
-| **comment-consistency** | Mismatches between comments/docstrings and actual code behavior, outdated TODOs, stale examples, and misleading names. |
+| モデル | `qwen2.5-coder:1.5b`（Docker イメージに pre-bake 済み） |
+| モデルサイズ | ~1 GB |
+| コンテキスト長 | 512 トークン |
+| 推論速度（2 vCPU） | ~1 トークン/秒 |
+| 差分上限 | 600 文字（~150 トークン） |
+| CI タイムアウト | 480 秒（curl）/ 45 分（ジョブ全体） |
 
-## Custom Agent
+## Docker イメージ
 
-The `code-reviewer` agent (`.copilot/agents/code-reviewer.md`) orchestrates all three skills. It reviews every changed file line-by-line and outputs structured findings:
+`ghcr.io/kyoneken/ollama-review:latest`
 
-```
-FILE: <path>
-LINE: <number>
-SEVERITY: <typo | logic | comment>
-DESCRIPTION: <problem>
-SUGGESTION: <fix>
+Dockerfile が更新されると GitHub Actions が自動でビルドして GHCR にプッシュします。
 
-SUMMARY: X issue(s) found across Y file(s).
-```
-
-Only real correctness issues are reported — no style preferences or refactor suggestions.
-
-## Configuration
-
-| Secret / Variable | Source | Purpose |
-|---|---|---|
-| `GITHUB_TOKEN` | Automatic (Actions) | Post PR comments |
-| `COPILOT_PROVIDER_BASE_URL` | Baked into image | Points Copilot CLI → Ollama |
-| `COPILOT_MODEL` | Baked into image | Model name to use |
-| `COPILOT_OFFLINE` | Baked into image | Skips GitHub auth check |
-
-No additional secrets are needed. Everything runs offline inside the container.
-
-## Local Development / Testing
+## ローカルでの動作確認
 
 ```bash
-# Build the image
-docker build -t ollama-review .
+# イメージを pull
+docker pull ghcr.io/kyoneken/ollama-review:latest
 
-# Generate a diff (adjust branch name as needed)
+# 差分を生成
 git diff main...HEAD > pr.diff
 
-# Run the review (output written to review.txt in current directory)
+# レビュー実行
 docker run --rm \
-  -v $(pwd):/workspace \
+  -v "$(pwd):/workspace" \
   -e REVIEW_OUTPUT=/workspace/review.txt \
-  ollama-review
+  ghcr.io/kyoneken/ollama-review:latest
 
 cat review.txt
 ```
 
-Pass the diff via environment variable instead of a file:
+## キャッシュ戦略
 
-```bash
-docker run --rm \
-  -e PR_DIFF="$(git diff main...HEAD)" \
-  -e REVIEW_OUTPUT=/workspace/review.txt \
-  -v $(pwd):/workspace \
-  ollama-review
+BuildKit の GitHub Actions キャッシュ (`type=gha`) を使用しています。`Dockerfile` または `entrypoint.sh` の変更時のみ再ビルドされます。
+
+## ファイル構成
+
 ```
-
-GPU acceleration (faster inference):
-
-```bash
-docker run --rm --gpus all \
-  -v $(pwd):/workspace \
-  -e REVIEW_OUTPUT=/workspace/review.txt \
-  ollama-review
+.
+├── action.yml              # Composite Action 定義（他リポジトリからの利用エントリポイント）
+├── Dockerfile              # Ollama + qwen2.5-coder:1.5b を pre-bake した CI コンテナ
+├── entrypoint.sh           # レビュー実行スクリプト（Ollama API 直接呼び出し）
+├── demo/ (submodule)       # 動作確認用リポジトリ（kyoneken/ollama-infra-demo）
+└── .github/
+    └── workflows/
+        ├── ai-review.yml       # 自リポジトリの PR レビュー（Composite Action 使用）
+        └── docker-publish.yml  # GHCR へのイメージ公開
 ```
-
-## Adding / Modifying Skills
-
-1. Create `.copilot/skills/your-skill.md` following the same front-matter format:
-   ```markdown
-   ---
-   name: your-skill
-   description: One-line description
-   ---
-   Instructions for the LLM...
-   ```
-2. Reference it in `.copilot/agents/code-reviewer.md` under `skills:`.
-3. Rebuild the Docker image — skills are baked in at build time.
-
-## Notes
-
-- **First run**: downloads `qwen2.5-coder:7b` (~4.7 GB) inside the container. Subsequent runs reuse Docker layer cache, so this only happens when the `Dockerfile` or `entrypoint.sh` changes.
-- **Fully offline**: `COPILOT_OFFLINE=true` means no GitHub authentication is required for the LLM calls.
-- **Timeout**: the workflow has a 30-minute timeout to accommodate the model download on cold starts.
-- **Non-blocking**: the review step uses `continue-on-error: true` so a failed review never blocks a merge.
