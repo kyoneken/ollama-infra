@@ -77,9 +77,14 @@ fi
 # --- Run code review via Ollama API directly ---
 log "Running code review (stream:true, num_predict:200, timeout 480s)..."
 
-SYSTEM_PROMPT="You are a strict code reviewer. For each issue in the diff, output exactly one line in this format:
+SYSTEM_PROMPT="You are a strict code reviewer. Check for ALL of the following:
+1. TYPOS: misspelled identifiers, strings, comments (e.g. recieve->receive, lenght->length)
+2. LOGIC: off-by-one, missing null/zero checks, wrong operators (- instead of +), unchecked errors
+3. COMMENT: docstring/comment says one thing but code does another
+
+For each issue output exactly one line:
 FILE|LINE|SEVERITY|ISSUE|FIX
-SEVERITY must be ERROR, WARNING, or INFO. Output ONLY lines in this format, nothing else."
+SEVERITY: ERROR, WARNING, or INFO. Output ONLY these lines, nothing else."
 
 FULL_PROMPT="${SYSTEM_PROMPT}
 
