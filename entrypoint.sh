@@ -93,18 +93,12 @@ ${DIFF_CONTENT}
 
 REVIEW:"
 
-# Build JSON payload — use Python to properly escape prompt content
-python3 -c "
-import json, sys
-payload = {
-    'model': sys.argv[1],
-    'prompt': sys.argv[2],
-    'stream': True,
-    'options': {'num_predict': 200, 'temperature': 0.1}
-}
-with open('/tmp/review_payload.json', 'w') as f:
-    json.dump(payload, f)
-" "${REVIEW_MODEL}" "${FULL_PROMPT}"
+# Build JSON payload — use jq to properly escape prompt content
+jq -n \
+  --arg model "${REVIEW_MODEL}" \
+  --arg prompt "${FULL_PROMPT}" \
+  '{model: $model, prompt: $prompt, stream: true, options: {num_predict: 200, temperature: 0.1}}' \
+  > /tmp/review_payload.json
 
 log "Payload written."
 
