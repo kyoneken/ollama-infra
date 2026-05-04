@@ -114,25 +114,8 @@ curl -s -N -m 480 \
 log "Review curl exit: ${CURL_EXIT}, size: $(wc -c < /tmp/raw_stream.ndjson) bytes"
 [[ -s /tmp/curl_err.txt ]] && log "curl stderr: $(cat /tmp/curl_err.txt)"
 
-# Extract .response tokens from the NDJSON stream
-python3 - << 'PYEOF' > /tmp/review_partial.txt
-import json, sys
-try:
-    with open('/tmp/raw_stream.ndjson', 'rb') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                d = json.loads(line)
-                t = d.get('response', '')
-                if t:
-                    sys.stdout.write(t)
-            except json.JSONDecodeError:
-                pass
-except Exception as e:
-    sys.stderr.write(f'[parse] error: {e}\n')
-PYEOF
+# Extract .response tokens from the NDJSON stream using jq
+jq -j 'select(.response != null) | .response' /tmp/raw_stream.ndjson > /tmp/review_partial.txt 2>/dev/null || true
 
 log "Streaming done. Output: $(wc -c < /tmp/review_partial.txt 2>/dev/null || echo 0) bytes"
 
