@@ -3,6 +3,9 @@ set -euo pipefail
 
 REVIEW_OUTPUT="${REVIEW_OUTPUT:-/tmp/review.txt}"
 DIFF_FILE="/tmp/pr.diff"
+# Use COPILOT_MODEL env var if set; fall back to pre-baked default
+BASE_MODEL="${COPILOT_MODEL:-qwen2.5-coder:1.5b}"
+REVIEW_MODEL="qwen-reviewer"
 
 log() { echo "[entrypoint] $*"; }
 
@@ -28,9 +31,20 @@ if [[ "$READY" != "true" ]]; then
 fi
 log "Ollama is ready."
 
-# --- Pull model ---
-log "Pulling model: qwen2.5-coder:7b ..."
-ollama pull qwen2.5-coder:7b
+# --- Verify model is present (no-op if pre-baked) ---
+log "Verifying model ${BASE_MODEL} is present..."
+ollama pull "${BASE_MODEL}" || log "Pull skipped or failed — model should already be in image."
+
+# --- Create a context-limited model to speed up CPU inference ---
+# Copilot CLI's built-in system prompt alone exceeds 10,000 tokens, making it
+# incompatible with small context windows. We call the Ollama API directly to
+# keep the total prompt small (~400 tokens) and inference fast (~30s on CPU).
+log "Creating context-limited model '${REVIEW_MODEL}' (num_ctx 512)..."
+cat > /tmp/Modelfile <<EOF
+FROM ${BASE_MODEL}
+PARAMETER num_ctx 512
+EOF
+ollama create "${REVIEW_MODEL}" -f /tmp/Modelfile
 
 # --- Resolve diff input ---
 if [[ -n "${PR_DIFF:-}" ]]; then
@@ -44,23 +58,89 @@ else
   exit 1
 fi
 
-# --- Authenticate gh / copilot if token provided ---
+# --- Authenticate gh if token provided ---
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   log "GITHUB_TOKEN detected; configuring gh auth..."
   echo "$GITHUB_TOKEN" | gh auth login --with-token 2>/dev/null || true
 fi
 
-# --- Run Copilot code review ---
-PROMPT="You are a code reviewer. Review the following diff and report: typos in identifiers/strings/comments, simple logic errors (off-by-one, null checks, missing returns), and discrepancies between comments and code. For each issue output: FILE, LINE, SEVERITY, DESCRIPTION, SUGGESTION.
+# --- Truncate diff ---
+MAX_DIFF_CHARS=600
+DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
+DIFF_LEN=$(wc -c < "${DIFF_FILE}")
+if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
+  DIFF_CONTENT="${DIFF_CONTENT}
+[... diff truncated at ${MAX_DIFF_CHARS} chars ...]"
+  log "Diff truncated from ${DIFF_LEN} chars to ${MAX_DIFF_CHARS} chars."
+fi
 
-Diff:
-$(cat "$DIFF_FILE")"
+# --- Run code review via Ollama API directly ---
+log "Running code review (stream:true, num_predict:200, timeout 480s)..."
 
-log "Running Copilot code review..."
-REVIEW_TEXT=$(copilot --yes -p "$PROMPT" 2>&1) || {
-  log "WARNING: copilot exited with non-zero status; capturing output anyway."
-  REVIEW_TEXT=$(copilot --yes -p "$PROMPT" 2>&1 || true)
+SYSTEM_PROMPT="You are a strict code reviewer. For each issue in the diff, output exactly one line in this format:
+FILE|LINE|SEVERITY|ISSUE|FIX
+SEVERITY must be ERROR, WARNING, or INFO. Output ONLY lines in this format, nothing else."
+
+FULL_PROMPT="${SYSTEM_PROMPT}
+
+DIFF:
+${DIFF_CONTENT}
+
+REVIEW:"
+
+# Build JSON payload — use Python to properly escape prompt content
+python3 -c "
+import json, sys
+payload = {
+    'model': sys.argv[1],
+    'prompt': sys.argv[2],
+    'stream': True,
+    'options': {'num_predict': 200, 'temperature': 0.1}
 }
+with open('/tmp/review_payload.json', 'w') as f:
+    json.dump(payload, f)
+" "${REVIEW_MODEL}" "${FULL_PROMPT}"
+
+log "Payload written."
+
+# --- Main review request: stream:true ---
+log "Starting review (stream:true, num_predict:200, timeout 480s)..."
+CURL_EXIT=0
+curl -s -N -m 480 \
+  -X POST http://localhost:11434/api/generate \
+  -H 'Content-Type: application/json' \
+  --data @/tmp/review_payload.json \
+  > /tmp/raw_stream.ndjson 2>/tmp/curl_err.txt || CURL_EXIT=$?
+
+log "Review curl exit: ${CURL_EXIT}, size: $(wc -c < /tmp/raw_stream.ndjson) bytes"
+[[ -s /tmp/curl_err.txt ]] && log "curl stderr: $(cat /tmp/curl_err.txt)"
+
+# Extract .response tokens from the NDJSON stream
+python3 - << 'PYEOF' > /tmp/review_partial.txt
+import json, sys
+try:
+    with open('/tmp/raw_stream.ndjson', 'rb') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+                t = d.get('response', '')
+                if t:
+                    sys.stdout.write(t)
+            except json.JSONDecodeError:
+                pass
+except Exception as e:
+    sys.stderr.write(f'[parse] error: {e}\n')
+PYEOF
+
+log "Streaming done. Output: $(wc -c < /tmp/review_partial.txt 2>/dev/null || echo 0) bytes"
+
+REVIEW_TEXT=$(cat /tmp/review_partial.txt 2>/dev/null || echo "")
+if [[ -z "$REVIEW_TEXT" ]]; then
+  REVIEW_TEXT="No review output generated (model may be too slow for CPU inference)."
+fi
 
 # --- Write output ---
 printf '%s\n' "$REVIEW_TEXT" > "$REVIEW_OUTPUT"
