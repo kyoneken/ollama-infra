@@ -39,10 +39,10 @@ ollama pull "${BASE_MODEL}" || log "Pull skipped or failed — model should alre
 # Copilot CLI's built-in system prompt alone exceeds 10,000 tokens, making it
 # incompatible with small context windows. We call the Ollama API directly to
 # keep the total prompt small (~400 tokens) and inference fast (~30s on CPU).
-log "Creating context-limited model '${REVIEW_MODEL}' (num_ctx 1024)..."
+log "Creating context-limited model '${REVIEW_MODEL}' (num_ctx 2048)..."
 cat > /tmp/Modelfile <<EOF
 FROM ${BASE_MODEL}
-PARAMETER num_ctx 1024
+PARAMETER num_ctx 2048
 EOF
 ollama create "${REVIEW_MODEL}" -f /tmp/Modelfile
 
@@ -65,7 +65,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # --- Truncate diff ---
-MAX_DIFF_CHARS=600
+MAX_DIFF_CHARS=4000
 DIFF_CONTENT=$(head -c "${MAX_DIFF_CHARS}" "${DIFF_FILE}")
 DIFF_LEN=$(wc -c < "${DIFF_FILE}")
 if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
@@ -75,7 +75,7 @@ if [[ "${DIFF_LEN}" -gt "${MAX_DIFF_CHARS}" ]]; then
 fi
 
 # --- Run code review via Ollama API directly ---
-log "Running code review (stream:true, num_predict:350, timeout 480s)..."
+log "Running code review (stream:true, num_predict:500, timeout 480s)..."
 
 SYSTEM_PROMPT="You are a strict code reviewer. Check for ALL of the following:
 1. TYPOS: misspelled identifiers, strings, comments (e.g. recieve->receive, lenght->length)
@@ -99,13 +99,13 @@ REVIEW:"
 jq -n \
   --arg model "${REVIEW_MODEL}" \
   --arg prompt "${FULL_PROMPT}" \
-  '{model: $model, prompt: $prompt, stream: true, options: {num_predict: 350, temperature: 0.1}}' \
+  '{model: $model, prompt: $prompt, stream: true, options: {num_predict: 500, temperature: 0.1}}' \
   > /tmp/review_payload.json
 
 log "Payload written."
 
 # --- Main review request: stream:true ---
-log "Starting review (stream:true, num_predict:350, timeout 480s)..."
+log "Starting review (stream:true, num_predict:500, timeout 480s)..."
 CURL_EXIT=0
 curl -s -N -m 480 \
   -X POST http://localhost:11434/api/generate \
