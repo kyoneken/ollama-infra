@@ -2,11 +2,12 @@ FROM ollama/ollama:latest
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install base dependencies + GitHub CLI + Node.js 20
+# Install base dependencies + GitHub CLI
 RUN apt-get update && apt-get install -y \
     curl \
     git \
     jq \
+    zstd \
     ca-certificates \
     gnupg \
     lsb-release \
@@ -16,24 +17,25 @@ RUN apt-get update && apt-get install -y \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
     && apt-get update && apt-get install -y gh \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install GitHub Copilot CLI
-RUN npm install -g @github/copilot-cli
+# Pre-bake the model during image build so CI never needs internet access at runtime.
+# Wait up to 60s for ollama to become ready before pulling.
+RUN ollama serve & \
+    OLLAMA_PID=$! && \
+    echo "Waiting for Ollama..." && \
+    for i in $(seq 1 60); do \
+      sleep 1 && curl -sf http://localhost:11434/ > /dev/null 2>&1 && echo "Ready after ${i}s" && break; \
+    done && \
+    ollama pull qwen2.5-coder:1.5b && \
+    echo "Model size: $(du -sh /root/.ollama/models)" && \
+    kill "$OLLAMA_PID" && wait "$OLLAMA_PID" 2>/dev/null || true
 
-# Environment variables for BYOK (Ollama local)
-ENV COPILOT_PROVIDER_BASE_URL=http://localhost:11434
-ENV COPILOT_MODEL=qwen2.5-coder:7b
+ENV COPILOT_MODEL=qwen2.5-coder:1.5b
 ENV COPILOT_OFFLINE=true
 ENV OLLAMA_HOST=0.0.0.0
 
 WORKDIR /workspace
-
-# Copy Copilot skills and agents
-COPY .copilot/skills/ /root/.copilot/skills/
-COPY .copilot/agents/ /root/.copilot/agents/
 
 # Copy and configure entrypoint
 COPY entrypoint.sh /entrypoint.sh
