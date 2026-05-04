@@ -63,18 +63,38 @@ runs:
           const fs = require('fs');
           const outputPath = `${process.env.GITHUB_WORKSPACE}/review_output.txt`;
 
-          let reviewText;
+          let rawText;
           try {
-            reviewText = fs.readFileSync(outputPath, 'utf8').trim();
+            rawText = fs.readFileSync(outputPath, 'utf8').trim();
           } catch (e) {
-            reviewText = '_Review output file not found. The container may have failed to start._';
+            rawText = '';
           }
 
-          if (!reviewText) {
-            reviewText = '_No review output was produced._';
+          // Parse FILE|LINE|SEVERITY|ISSUE|FIX lines into a Markdown table
+          const severityIcon = s => s === 'ERROR' ? '🔴' : s === 'WARNING' ? '🟡' : '🔵';
+          const tableRows = (rawText || '').split('\n')
+            .map(l => l.trim())
+            .filter(l => l && !l.startsWith('FILE|'))
+            .map(l => {
+              const p = l.split('|');
+              if (p.length < 5) return null;
+              const [file, line, sev, issue, fix] = p.map(x => x.trim());
+              return `| \`${file}\` | ${line} | ${severityIcon(sev)} **${sev}** | ${issue} | ${fix} |`;
+            })
+            .filter(Boolean);
+
+          let reviewText;
+          if (tableRows.length > 0) {
+            reviewText = [
+              '| ファイル | 行 | 深刻度 | 問題 | 修正案 |',
+              '|----------|:---:|--------|------|--------|',
+              ...tableRows,
+            ].join('\n');
+          } else {
+            reviewText = rawText || '_レビュー結果が生成されませんでした。_';
           }
 
-          const poweredBy = 'Powered by [Ollama](https://ollama.com) running `qwen2.5-coder:1.5b` (pre-installed in Docker image).';
+          const poweredBy = '[Ollama](https://ollama.com) で `qwen2.5-coder:1.5b`（Dockerイメージにプリインストール済み）を使用してレビューを実行しました。';
           const logsUrl = context.payload.pull_request
             ? `${context.payload.pull_request.html_url}/checks`
             : '';
