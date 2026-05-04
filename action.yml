@@ -70,26 +70,27 @@ runs:
             rawText = '';
           }
 
-          // Parse FILE|LINE|SEVERITY|ISSUE|FIX lines into a Markdown table
+          // Parse FILE|LINE|SEVERITY|ISSUE|FIX|REASON_JA lines into cards
           const severityIcon = s => s === 'ERROR' ? '🔴' : s === 'WARNING' ? '🟡' : '🔵';
-          const tableRows = (rawText || '').split('\n')
+          const cards = (rawText || '').split('\n')
             .map(l => l.trim())
             .filter(l => l && !l.startsWith('FILE|'))
             .map(l => {
               const p = l.split('|');
               if (p.length < 5) return null;
-              const [file, line, sev, issue, fix] = p.map(x => x.trim());
-              return `| \`${file}\` | ${line} | ${severityIcon(sev)} **${sev}** | ${issue} | ${fix} |`;
+              const [file, line, sev, issue, fix, reason] = p.map(x => x.trim());
+              const icon = severityIcon(sev);
+              let card = `### ${icon} ${sev} · \`${file}\` 行${line}\n`;
+              card += `**問題:** ${issue}  \n`;
+              card += `**修正案:** \`${fix}\`  \n`;
+              if (reason) card += `**なぜ修正が必要か:** ${reason}\n`;
+              return card;
             })
             .filter(Boolean);
 
           let reviewText;
-          if (tableRows.length > 0) {
-            reviewText = [
-              '| ファイル | 行 | 深刻度 | 問題 | 修正案 |',
-              '|----------|:---:|--------|------|--------|',
-              ...tableRows,
-            ].join('\n');
+          if (cards.length > 0) {
+            reviewText = cards.join('\n---\n\n');
           } else {
             reviewText = rawText || '_レビュー結果が生成されませんでした。_';
           }
