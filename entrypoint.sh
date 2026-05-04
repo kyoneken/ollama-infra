@@ -4,7 +4,7 @@ set -euo pipefail
 REVIEW_OUTPUT="${REVIEW_OUTPUT:-/tmp/review.txt}"
 DIFF_FILE="/tmp/pr.diff"
 # Use COPILOT_MODEL env var if set; fall back to pre-baked default
-BASE_MODEL="${COPILOT_MODEL:-qwen2.5-coder:1.5b}"
+BASE_MODEL="${COPILOT_MODEL:-qwen2.5-coder:7b}"
 REVIEW_MODEL="qwen-reviewer"
 
 log() { echo "[entrypoint] $*"; }

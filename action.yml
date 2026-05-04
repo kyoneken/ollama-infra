@@ -95,7 +95,7 @@ runs:
             reviewText = rawText || '_レビュー結果が生成されませんでした。_';
           }
 
-          const poweredBy = '[Ollama](https://ollama.com) で `qwen2.5-coder:1.5b`（Dockerイメージにプリインストール済み）を使用してレビューを実行しました。';
+          const poweredBy = '[Ollama](https://ollama.com) で `qwen2.5-coder:7b`（Dockerイメージにプリインストール済み）を使用してレビューを実行しました。';
           const logsUrl = context.payload.pull_request
             ? `${context.payload.pull_request.html_url}/checks`
             : '';
