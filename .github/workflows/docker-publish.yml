@@ -5,7 +5,8 @@ on:
     branches: [main]
     paths:
       - 'Dockerfile'
-      - 'entrypoint.sh'
+      - 'cmd/**'
+      - 'internal/**'
   workflow_dispatch:
 
 permissions:
