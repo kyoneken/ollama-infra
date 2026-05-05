@@ -130,18 +130,63 @@ cat review.txt
 
 ## キャッシュ戦略
 
-BuildKit の GitHub Actions キャッシュ (`type=gha`) を使用しています。`Dockerfile` または `entrypoint.sh` の変更時のみ再ビルドされます。
+BuildKit の GitHub Actions キャッシュ (`type=gha`) を使用しています。`Dockerfile` または `cmd/`、`internal/` の変更時のみ再ビルドされます。
 
 ## ファイル構成
 
 ```
 .
-├── action.yml              # Composite Action 定義（他リポジトリからの利用エントリポイント）
-├── Dockerfile              # Ollama + qwen2.5-coder:1.5b を pre-bake した CI コンテナ
-├── entrypoint.sh           # レビュー実行スクリプト（Ollama API 直接呼び出し）
-├── demo/ (submodule)       # 動作確認用リポジトリ（kyoneken/ollama-infra-demo）
+├── action.yml                  # Composite Action 定義（他リポジトリからの利用エントリポイント）
+├── Dockerfile                  # マルチステージビルド：golang:1.24 + ollama/ollama
+│                               # qwen2.5-coder:1.5b を pre-bake
+├── cmd/
+│   └── reviewer/
+│       └── main.go             # レビュー実行メイン（Go実装、entrypoint.sh の置換）
+├── internal/
+│   ├── diff/
+│   │   ├── annotate.go         # diff 行番号アノテーション（awk → Go）
+│   │   └── annotate_test.go    # 8 unit tests
+│   └── ollama/
+│       ├── client.go           # Ollama HTTP API クライアント
+│       └── client_test.go      # 6 unit tests（httptest）
+├── go.mod                      # Go module 定義（1.24.4）
+├── .tool-versions              # Go 1.24.4 指定
+├── demo/ (submodule)           # 動作確認用リポジトリ（kyoneken/ollama-infra-demo）
 └── .github/
     └── workflows/
         ├── ai-review.yml       # 自リポジトリの PR レビュー（Composite Action 使用）
         └── docker-publish.yml  # GHCR へのイメージ公開
+```
+
+## 実装の詳細
+
+### Go Migration (v1: Bash → Go)
+
+**165行の Bash スクリプト** が以下のように Go で実装されました：
+
+| コンポーネント | Bash | Go | メリット |
+|---|---|---|---|
+| **diff 解析** | awk + sed | `internal/diff/annotate.go` | 型安全性、テスト容易性 |
+| **Ollama 通信** | curl + jq | `internal/ollama/client.go` | エラーハンドリング、リトライ可能 |
+| **メイン処理** | entrypoint.sh | `cmd/reviewer/main.go` | 構造化、保守性向上 |
+
+### 主な改善点
+
+1. **エラーハンドリング**: すべてのエラーパスを型システムで追跡可能
+2. **テスト**: 各モジュール 6–8 個の unit tests（`go test ./...`）
+3. **リソース管理**: `defer client.Stop()` で確実な Ollama プロセス終了
+4. **バッファ管理**: 1 MB スキャナバッファで大規模レスポンス対応
+5. **タイムアウト制御**: コンテキストベースの多層タイムアウト
+
+### ビルド
+
+```bash
+# builder ステージ
+FROM golang:1.24-alpine
+go build -o /reviewer ./cmd/reviewer/
+
+# runtime ステージ
+FROM ollama/ollama:latest
+COPY --from=builder /reviewer /reviewer
+# qwen2.5-coder:1.5b を pre-bake（ダウンロード時間ゼロ）
 ```
