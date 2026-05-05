@@ -1,44 +1,38 @@
+# Stage 1: builder
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /build
+
+COPY go.mod ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /reviewer ./cmd/reviewer/
+
+# Stage 2: runtime
 FROM ollama/ollama:latest
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install base dependencies + GitHub CLI
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    jq \
-    zstd \
-    ca-certificates \
-    gnupg \
-    lsb-release \
-    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get update && apt-get install -y gh \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /reviewer /reviewer
 
 # Pre-bake the model during image build so CI never needs internet access at runtime.
-# Wait up to 60s for ollama to become ready before pulling.
 RUN ollama serve & \
-    OLLAMA_PID=$! && \
-    echo "Waiting for Ollama..." && \
+    SERVER_PID=$! && \
+    echo "Waiting for ollama to start..." && \
     for i in $(seq 1 60); do \
-      sleep 1 && curl -sf http://localhost:11434/ > /dev/null 2>&1 && echo "Ready after ${i}s" && break; \
+      if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then \
+        echo "Ollama ready"; break; \
+      fi; \
+      sleep 1; \
     done && \
     ollama pull qwen2.5-coder:1.5b && \
-    echo "Model size: $(du -sh /root/.ollama/models)" && \
-    kill "$OLLAMA_PID" && wait "$OLLAMA_PID" 2>/dev/null || true
+    kill $SERVER_PID || true
 
 ENV COPILOT_MODEL=qwen2.5-coder:1.5b
 ENV COPILOT_OFFLINE=true
 ENV OLLAMA_HOST=0.0.0.0
 
-WORKDIR /workspace
-
-# Copy and configure entrypoint
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/reviewer"]
