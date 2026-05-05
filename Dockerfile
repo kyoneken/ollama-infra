@@ -53,4 +53,4 @@ ENV COPILOT_MODEL=qwen2.5-coder:1.5b
 ENV COPILOT_OFFLINE=true
 ENV OLLAMA_HOST=0.0.0.0
 
-ENTRYPOINT ["/reviewer"]
+ENTRYPOINT ["/bin/bash", "-c", "source /config/copilot-config.sh && exec /reviewer"]
