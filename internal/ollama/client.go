@@ -18,6 +18,7 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
+	serveCmd   *exec.Cmd
 }
 
 // GenerateOptions はレビュー生成リクエストのパラメータ。
@@ -31,7 +32,7 @@ type GenerateOptions struct {
 func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL:    strings.TrimRight(baseURL, "/"),
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: 5 * time.Minute},
 	}
 }
 
@@ -39,37 +40,50 @@ func NewClient(baseURL string) *Client {
 // 起動後すぐ返る（準備完了を待たない）。準備待ちは WaitReady で行う。
 func (c *Client) Start() error {
 	cmd := exec.Command("ollama", "serve")
+	c.serveCmd = cmd
 	return cmd.Start()
+}
+
+// Stop terminates the ollama serve process if it was started by Start().
+func (c *Client) Stop() {
+	if c.serveCmd != nil && c.serveCmd.Process != nil {
+		c.serveCmd.Process.Kill() //nolint:errcheck
+	}
 }
 
 // WaitReady は Ollama が HTTP リクエストに応答するまで待機する。
 // timeout を超えるか ctx がキャンセルされた場合はエラーを返す。
 // 1 秒ごとにリトライする。
 func (c *Client) WaitReady(ctx context.Context, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/", nil)
-		if err != nil {
-			return err
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("ollama did not become ready: %w", ctx.Err())
+		default:
 		}
-		resp, err := c.httpClient.Do(req)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/", nil)
 		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode < 400 {
-				return nil
+			resp, err := c.httpClient.Do(req)
+			if err == nil {
+				resp.Body.Close()
+				if resp.StatusCode < 400 {
+					return nil
+				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("ollama did not become ready: %w", ctx.Err())
 		case <-time.After(time.Second):
 		}
 	}
-	return fmt.Errorf("ollama did not become ready within %s", timeout)
 }
 
-// EnsureModel は POST /api/pull でモデルの存在を確認する。
-// イメージにプリベイク済みの場合は数秒で返る。
+// EnsureModel は POST /api/pull でモデルをダウンロード（または確認）する。
+// Dockerイメージにプリベイク済みの場合は即座に返る。
+// 初回実行時はモデルのダウンロードに数分かかる場合がある。
 func (c *Client) EnsureModel(ctx context.Context, model string) error {
 	payload := map[string]any{"name": model, "stream": false}
 	return c.postDrain(ctx, "/api/pull", payload)
@@ -84,7 +98,7 @@ func (c *Client) Generate(ctx context.Context, model, prompt string, opts Genera
 	if opts.NumPredict == 0 {
 		opts.NumPredict = 500
 	}
-	if opts.Temperature == 0 {
+	if opts.Temperature <= 0 {
 		opts.Temperature = 0.1
 	}
 
@@ -123,6 +137,7 @@ func (c *Client) Generate(ctx context.Context, model, prompt string, opts Genera
 
 	var sb strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20) // 1 MB per line — prevents truncation of long model responses
 	for scanner.Scan() {
 		var chunk struct {
 			Response string `json:"response"`
@@ -158,9 +173,9 @@ func (c *Client) postDrain(ctx context.Context, path string, payload any) error 
 		return err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) //nolint:errcheck
+	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, path)
+		return fmt.Errorf("HTTP %d from %s: %s", resp.StatusCode, path, bytes.TrimSpace(b))
 	}
 	return nil
 }
