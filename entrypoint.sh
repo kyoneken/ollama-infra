@@ -97,19 +97,24 @@ fi
 # --- Run code review via Ollama API directly ---
 log "Running code review (stream:true, num_predict:500, timeout 480s)..."
 
-SYSTEM_PROMPT="You are a strict code reviewer. Check for ALL of the following:
-1. TYPOS: misspelled identifiers, strings, comments (e.g. recieve->receive, lenght->length)
+SYSTEM_PROMPT='You are a strict code reviewer. Check for ALL of the following:
+1. TYPOS: misspelled identifiers, strings, comments (e.g. Mulitply->Multiply, CountVowles->CountVowels)
 2. LOGIC: off-by-one, missing null/zero checks, wrong operators (- instead of +), unchecked errors
 3. COMMENT: docstring/comment says one thing but code does another
 
-The diff lines are annotated with [LINE_NUMBER] at the start.
-Use the [LINE_NUMBER] value as the LINE in your output.
+Diff lines are annotated with file line numbers like this:
+  "[  12]+	return a - b"  => line 12 was ADDED (+ means new line)
+  "[  10] 	func Add(...)"  => line 10 is context
+  "      -	return a + b"  => deleted line (no line number)
+Use the integer inside [] as LINE. Do not copy the brackets.
 
-For each issue output exactly one line:
+For each issue output exactly one line in this format:
 FILE|LINE|SEVERITY|ISSUE|FIX|REASON_JA
-SEVERITY: ERROR, WARNING, or INFO.
-REASON_JA: one Japanese sentence explaining why this must be fixed.
-Output ONLY these lines, nothing else."
+- LINE: integer from [] annotation (e.g. 12, not "[  12]")
+- SEVERITY: ERROR, WARNING, or INFO
+- FIX: the corrected code snippet only (no line numbers)
+- REASON_JA: one Japanese sentence explaining why this must be fixed
+Output ONLY these pipe-separated lines, nothing else.'
 
 FULL_PROMPT="${SYSTEM_PROMPT}
 
