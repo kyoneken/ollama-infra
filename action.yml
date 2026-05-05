@@ -104,49 +104,44 @@ runs:
             return;
           }
 
-          // Build inline review comments (one per issue, attached to the file line)
-          const inlineComments = issues
-            .filter(i => i.line > 0)
-            .map(i => ({
-              path: i.file,
-              line: i.line,
-              side: 'RIGHT',
-              body: [
-                `${severityIcon(i.sev)} **${i.sev}**`,
-                '',
-                `**問題:** ${i.issue}`,
-                `**修正案:** \`${i.fix}\``,
-                i.reason ? `**なぜ修正が必要か:** ${i.reason}` : '',
-              ].filter(x => x !== '').join('\n'),
-            }));
-
+          // Post a summary review first, then individual inline comments via createReviewComment
+          const commitId = context.payload.pull_request.head.sha;
           const reviewBody = `## 🤖 AIコードレビュー\n\n${issues.length}件の指摘があります。\n\n---\n${footer}`;
 
-          try {
-            await github.rest.pulls.createReview({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-              commit_id: context.payload.pull_request.head.sha,
-              event: 'COMMENT',
-              body: reviewBody,
-              comments: inlineComments,
-            });
-          } catch (e) {
-            core.warning(`Inline review failed (${e.message}), falling back to summary comment`);
-            // Fall back: post as a single summary comment with cards
-            const cards = issues.map(i => {
-              let card = `### ${severityIcon(i.sev)} ${i.sev} · \`${i.file}\` 行${i.line}\n`;
-              card += `**問題:** ${i.issue}  \n**修正案:** \`${i.fix}\`  \n`;
-              if (i.reason) card += `**なぜ修正が必要か:** ${i.reason}\n`;
-              return card;
-            });
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: [`## 🤖 AIコードレビュー`, '', cards.join('\n---\n\n'), '', '---', footer].join('\n'),
-            });
+          // Post summary review (no inline comments — avoids createReview position limitations)
+          await github.rest.pulls.createReview({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: context.issue.number,
+            commit_id: commitId,
+            event: 'COMMENT',
+            body: reviewBody,
+          });
+
+          // Post each issue as an individual inline comment using createReviewComment
+          // (supports line + side directly, unlike createReview.comments[])
+          for (const i of issues.filter(x => x.line > 0)) {
+            const body = [
+              `${severityIcon(i.sev)} **${i.sev}**`,
+              '',
+              `**問題:** ${i.issue}`,
+              `**修正案:** \`${i.fix}\``,
+              i.reason ? `**なぜ修正が必要か:** ${i.reason}` : '',
+            ].filter(x => x !== '').join('\n');
+            try {
+              await github.rest.pulls.createReviewComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                commit_id: commitId,
+                path: i.file,
+                line: i.line,
+                side: 'RIGHT',
+                body,
+              });
+            } catch (e) {
+              core.warning(`Inline comment failed for ${i.file}:${i.line} (${e.message})`);
+            }
           }
 
 branding:
