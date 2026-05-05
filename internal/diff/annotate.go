@@ -9,7 +9,7 @@ import (
 )
 
 // hunkHeaderRe は @@ ヘッダーの + 側の開始行番号を抽出する。
-// 例: "@@ -1,4 +5,8 @@" → ["  +5", "5"]
+// 例: "@@ -1,4 +5,8 @@" → submatch ["+5", "5"]
 var hunkHeaderRe = regexp.MustCompile(`\+(\d+)`)
 
 // Annotate は unified diff テキストに新ファイル行番号を注釈する。
@@ -48,14 +48,18 @@ func Annotate(diffText string) string {
 			sb.WriteString(line + "\n")
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		// In practice unreachable for strings.Reader, but documents the contract
+		return sb.String()
+	}
 	return sb.String()
 }
 
-// Truncate は diffText を最大 maxChars バイトに切り詰める。
+// Truncate は diffText を最大 maxBytes バイトに切り詰める。
 // 超過した場合は末尾に通知行を追加する。
-func Truncate(diffText string, maxChars int) string {
-	if len(diffText) <= maxChars {
+func Truncate(diffText string, maxBytes int) string {
+	if len(diffText) <= maxBytes {
 		return diffText
 	}
-	return diffText[:maxChars] + fmt.Sprintf("\n[... diff truncated at %d chars ...]", maxChars)
+	return diffText[:maxBytes] + fmt.Sprintf("\n[... diff truncated at %d chars ...]", maxBytes)
 }

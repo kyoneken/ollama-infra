@@ -36,6 +36,15 @@ func TestAnnotate_PlusPlusPlus(t *testing.T) {
 	}
 }
 
+// --- 行は削除行扱いになる（awk と同じ挙動）
+func TestAnnotate_DashDashDash(t *testing.T) {
+	input := "--- a/main.go\n+++ b/main.go\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+	got := diff.Annotate(input)
+	if !strings.Contains(got, "      --- a/main.go") {
+		t.Errorf("--- line should be rendered with deletion indent; got:\n%s", got)
+	}
+}
+
 // @@ ヘッダーが複数あるとき行番号がリセットされる
 func TestAnnotate_MultiHunk(t *testing.T) {
 	input := "@@ -1,2 +1,2 @@\n+line1\n@@ -10,2 +10,2 @@\n+line10\n"
@@ -57,7 +66,7 @@ func TestTruncate_NoTruncation(t *testing.T) {
 	}
 }
 
-// maxChars で正確に切り詰め、通知行が付く
+// maxBytes で正確に切り詰め、通知行が付く
 func TestTruncate_Truncates(t *testing.T) {
 	s := "abcdefghij"
 	got := diff.Truncate(s, 5)
@@ -69,7 +78,7 @@ func TestTruncate_Truncates(t *testing.T) {
 	}
 }
 
-// ちょうど maxChars のとき切り詰めなし
+// ちょうど maxBytes のとき切り詰めなし
 func TestTruncate_ExactLength(t *testing.T) {
 	s := "abcde"
 	got := diff.Truncate(s, 5)
