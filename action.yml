@@ -70,6 +70,8 @@ runs:
             rawText = '';
           }
 
+          core.info(`[debug] rawText: ${JSON.stringify(rawText)}`);
+
           const severityIcon = s => s === 'ERROR' ? '🔴' : s === 'WARNING' ? '🟡' : '🔵';
           const issues = (rawText || '').split('\n')
             .map(l => l.trim())
@@ -81,6 +83,8 @@ runs:
               return { file, line: parseInt(line) || 0, sev, issue, fix, reason };
             })
             .filter(Boolean);
+
+          core.info(`[debug] issues: ${JSON.stringify(issues.map(i => ({file: i.file, line: i.line, sev: i.sev})))}`);
 
           const poweredBy = '[Ollama](https://ollama.com) で `qwen2.5-coder:1.5b`（Dockerイメージにプリインストール済み）を使用してレビューを実行しました。';
           const logsUrl = context.payload.pull_request
