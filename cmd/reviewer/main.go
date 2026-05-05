@@ -48,12 +48,12 @@ func main() {
 	outputPath := getenv("REVIEW_OUTPUT", "/tmp/review.txt")
 
 	client := ollama.NewClient(ollamaURL)
-	defer client.Stop()
 
 	logf("Starting ollama serve...")
 	if err := client.Start(); err != nil {
 		log.Fatalf("failed to start ollama: %v", err)
 	}
+	defer client.Stop()
 
 	logf("Waiting for Ollama to be ready (timeout 60s)...")
 	ctx := context.Background()
@@ -106,13 +106,19 @@ func main() {
 	fmt.Println("=================================")
 }
 
-// readDiff returns the diff text. Priority: /workspace/pr.diff file, then PR_DIFF env var.
+// readDiff returns the diff text. Priority: /workspace/pr.diff file (non-empty), then PR_DIFF env var.
 func readDiff() (string, error) {
 	const diffFile = "/workspace/pr.diff"
 	if _, err := os.Stat(diffFile); err == nil {
 		logf("Using %s...", diffFile)
 		b, err := os.ReadFile(diffFile)
-		return string(b), err
+		if err != nil {
+			return "", err
+		}
+		if len(b) > 0 {
+			return string(b), nil
+		}
+		// File exists but is empty — fall through to PR_DIFF.
 	}
 	if v := os.Getenv("PR_DIFF"); v != "" {
 		logf("Using PR_DIFF env var...")
