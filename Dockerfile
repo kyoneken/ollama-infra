@@ -33,6 +33,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | d
 RUN curl -fsSL https://gh.io/copilot-install | bash
 
 COPY --from=builder /reviewer /reviewer
+COPY config/copilot-config.sh /config/copilot-config.sh
+RUN chmod +x /config/copilot-config.sh
 
 # Pre-bake the model during image build so CI never needs internet access at runtime.
 RUN ollama serve & \
