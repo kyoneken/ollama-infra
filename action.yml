@@ -51,6 +51,8 @@ runs:
         docker run --rm \
           -v "${{ github.workspace }}:/workspace" \
           -e GITHUB_TOKEN="${{ inputs.github-token }}" \
+          -e GH_TOKEN="${{ inputs.github-token }}" \
+          -e GH_COPILOT_ENDPOINT="http://localhost:11434" \
           -e COPILOT_MODEL="${{ inputs.model }}" \
           -e REVIEW_OUTPUT=/workspace/review_output.txt \
           ghcr.io/kyoneken/ollama-review:latest
