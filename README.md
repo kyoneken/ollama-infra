@@ -64,6 +64,54 @@ Ollama REST API (/api/generate)
 レビュー結果 ──► インラインレビューコメントとして各行に投稿
 ```
 
+### Copilot CLI Integration
+
+Docker イメージには **GitHub Copilot CLI** がインストールされており、ローカルの Ollama インスタンスを利用した AI レビューをサポートしています。これにより、**外部 API を一切使用せず、完全にローカルで推論** が可能です。
+
+**動作フロー：**
+
+1. Docker コンテナ起動時に `copilot-config.sh` が実行される
+2. Copilot CLI を `http://localhost:11434` (コンテナ内 Ollama) に指定
+3. レビューロジックが Copilot CLI を優先的に試行
+4. Copilot 利用不可の場合は Go ベースの Ollama クライアントにフォールバック
+5. どちらを使用した場合でも PR にインラインコメント投稿
+
+**環境変数：**
+
+| 変数 | 値 | 説明 |
+|---|---|---|
+| `GH_COPILOT_ENDPOINT` | `http://localhost:11434` | コンテナ内ローカル Ollama エンドポイント |
+| `GH_COPILOT_OFFLINE_MODE` | `true` | オフライン推論モード（API 不要） |
+| `GH_TOKEN` | `${{ secrets.GITHUB_TOKEN }}` | GitHub トークン（action.yml より渡却） |
+
+**アーキテクチャ図：**
+
+```
+GitHub Action (ubuntu-latest)
+      │
+      ▼
+Docker Container (ollama-infra)
+      ├─ Ollama サーバー (localhost:11434)
+      │   └─ qwen2.5-coder:1.5b (pre-baked)
+      │
+      ├─ Copilot CLI
+      │   └─ Try Copilot → http://localhost:11434
+      │
+      └─ Go Reviewer
+          └─ Fallback to Go Ollama client
+      │
+      ▼
+PR インラインコメント投稿
+```
+
+**ゼロ API 消費の利点：**
+
+- ✅ GitHub Copilot Pro サブスクリプション不要
+- ✅ 外部 AI API キー不要
+- ✅ 完全オフライン動作（インターネット接続不要）
+- ✅ ローカルモデルのため推論速度が予測可能
+- ✅ エンタープライズ環境でのセキュリティ要件を満たす
+
 ## モデルとパフォーマンス
 
 | 項目 | 値 |
