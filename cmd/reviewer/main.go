@@ -40,17 +40,27 @@ func reviewWithSDK(diff string, model string, skillDirs []string) (string, error
 
 	logf("Trying Copilot SDK (timeout 30s, skills enabled)...")
 
+	// Verify Ollama is running before attempting SDK initialization
+	logf("Verifying Ollama endpoint is ready...")
+	client := ollama.NewClient(ollamaURL)
+	ctx := context.Background()
+	if err := client.WaitReady(ctx, 5*time.Second); err != nil {
+		logf("Warning: Ollama not immediately ready: %v (attempting SDK anyway...)", err)
+	} else {
+		logf("✓ Ollama verified ready")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), sdkTimeout)
 	defer cancel()
 
-	client, err := copilot.NewReviewClient(ctx)
+	reviewClient, err := copilot.NewReviewClient(ctx)
 	if err != nil {
 		logf("Copilot SDK initialization failed: %v — falling back to Ollama", err)
 		return "", err
 	}
-	defer client.Close()
+	defer reviewClient.Close()
 
-	reviewText, err := client.Review(ctx, diff, model, skillDirs)
+	reviewText, err := reviewClient.Review(ctx, diff, model, skillDirs)
 	if err != nil {
 		logf("Copilot SDK review failed: %v — falling back to Ollama", err)
 		return "", err

@@ -60,15 +60,24 @@ func NewReviewClient(ctx context.Context) (*ReviewClient, error) {
 		return nil, fmt.Errorf("setenv GH_COPILOT_ENDPOINT: %w", err)
 	}
 
-	// Create SDK client (bundler-managed binary)
+	// Create SDK client with explicit environment variables
+	// Use Env option to ensure GH_COPILOT_ENDPOINT is passed to CLI process
 	client := copilot.NewClient(&copilot.ClientOptions{
-		LogLevel: "debug",
+		LogLevel: "debug",  // DEBUG: Detailed CLI startup logs
+		Env: append(
+			os.Environ(),
+			"GH_COPILOT_ENDPOINT=http://localhost:11434",
+		),
 	})
 
 	// Start SDK server (manages CLI process)
 	fmt.Fprintf(os.Stderr, "[copilot-sdk] Starting SDK server...\n")
+	fmt.Fprintf(os.Stderr, "[copilot-sdk] GH_COPILOT_ENDPOINT=%s\n", os.Getenv("GH_COPILOT_ENDPOINT"))
 	if err := client.Start(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "[copilot-sdk] ✗ Initialization error:\n%+v\n", err)
+		// Try to give more context
+		fmt.Fprintf(os.Stderr, "[copilot-sdk] Error type: %T\n", err)
+		fmt.Fprintf(os.Stderr, "[copilot-sdk] Note: SDK requires Ollama to be running at GH_COPILOT_ENDPOINT\n")
 		return nil, fmt.Errorf("copilot SDK start: %w", err)
 	}
 

@@ -1,0 +1,65 @@
+# Stage 1: builder
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /reviewer ./cmd/reviewer/
+
+# Stage 2: runtime debug
+FROM ollama/ollama:latest
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install debug tools
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      strace \
+      ldd \
+      file \
+      strings && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Copilot CLI
+RUN set -e; \
+    COPILOT_CLI_VERSION="1.0.41"; \
+    curl -sL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_CLI_VERSION}/copilot-linux-x64.tar.gz" | tar xz -C /usr/local/bin && \
+    chmod +x /usr/local/bin/copilot
+
+# Debug: Check CLI binary
+RUN echo "=== CLI Binary Analysis ===" && \
+    file /usr/local/bin/copilot && \
+    echo "Size: $(stat -c%s /usr/local/bin/copilot) bytes" && \
+    echo "Permissions: $(ls -l /usr/local/bin/copilot)" && \
+    echo "" && \
+    echo "=== Library Dependencies ===" && \
+    ldd /usr/local/bin/copilot || echo "ldd not available (static binary?)" && \
+    echo "" && \
+    echo "=== Testing CLI Directly ===" && \
+    /usr/local/bin/copilot --version || echo "CLI execution failed"
+
+COPY --from=builder /reviewer /reviewer
+
+# Pre-bake model
+RUN ollama serve & \
+    SERVER_PID=$! ; \
+    echo "Waiting for ollama to start..." && \
+    for i in $(seq 1 60); do \
+      if curl -sf http://localhost:11434/api/tags > /dev/null 2>&1; then \
+        echo "Ollama ready"; break; \
+      fi; \
+      sleep 1; \
+    done && \
+    ollama pull qwen2.5-coder:1.5b && \
+    kill $SERVER_PID || true
+
+ENV COPILOT_MODEL=qwen2.5-coder:1.5b
+ENV COPILOT_OFFLINE=true
+ENV OLLAMA_HOST=0.0.0.0
+
+ENTRYPOINT ["/reviewer"]
