@@ -1,15 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/kyoneken/ollama-infra/internal/copilot"
 	"github.com/kyoneken/ollama-infra/internal/diff"
 	"github.com/kyoneken/ollama-infra/internal/ollama"
 )
@@ -45,37 +44,35 @@ func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[reviewer] "+format+"\n", args...)
 }
 
-// runCopilotReview executes the copilot review command with the given diff and model.
-// Returns the review response or an error if copilot is unavailable or the command fails.
-func runCopilotReview(diff string, model string) (string, error) {
-	const copilotTimeout = 30 * time.Second
+// reviewWithSDK executes the copilot SDK review with the given diff and model.
+// Returns the review response or an error if SDK is unavailable or the request fails.
+func reviewWithSDK(diff string, model string) (string, error) {
+	const sdkTimeout = 30 * time.Second
 
-	logf("Trying Copilot CLI (timeout 30s)...")
+	logf("Trying Copilot SDK (timeout 30s)...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), copilotTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), sdkTimeout)
 	defer cancel()
 
-	// Build copilot review command with diff and model arguments
-	cmd := exec.CommandContext(ctx, "copilot", "review", "--diff", diff, "--model", model)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	client, err := copilot.NewReviewClient(ctx)
 	if err != nil {
-		// Log copilot failure at info level (it's optional)
-		logf("Copilot CLI unavailable or failed: %v (stderr: %s) — falling back to Ollama", err, stderr.String())
+		logf("Copilot SDK initialization failed: %v — falling back to Ollama", err)
+		return "", err
+	}
+	defer client.Close()
+
+	reviewText, err := client.Review(ctx, diff, model)
+	if err != nil {
+		logf("Copilot SDK review failed: %v — falling back to Ollama", err)
 		return "", err
 	}
 
-	reviewText := stdout.String()
 	if strings.TrimSpace(reviewText) == "" {
-		logf("Copilot CLI returned empty response — falling back to Ollama")
-		return "", fmt.Errorf("empty copilot response")
+		logf("Copilot SDK returned empty response — falling back to Ollama")
+		return "", fmt.Errorf("empty SDK response")
 	}
 
-	logf("Copilot CLI review successful")
+	logf("Copilot SDK review successful")
 	return reviewText, nil
 }
 
@@ -96,10 +93,10 @@ func main() {
 
 	var reviewText string
 
-	// Try Copilot CLI first
-	if copilotResponse, err := runCopilotReview(truncated, model); err == nil {
-		reviewText = copilotResponse
-		logf("Using Copilot CLI for review")
+	// Try Copilot SDK first
+	if sdkResponse, err := reviewWithSDK(truncated, model); err == nil {
+		reviewText = sdkResponse
+		logf("Using Copilot SDK for review")
 	} else {
 		// Fall back to Ollama client
 		logf("Falling back to Ollama for review...")
