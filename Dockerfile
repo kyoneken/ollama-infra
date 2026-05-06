@@ -28,9 +28,14 @@ COPY --from=builder /reviewer /reviewer
 # Using curl to fetch the latest CLI release for Linux
 RUN set -e; \
     COPILOT_CLI_VERSION="1.0.41"; \
+    echo "[DEBUG] Installing Copilot CLI v${COPILOT_CLI_VERSION}..." && \
     curl -sL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_CLI_VERSION}/copilot-linux-x64.tar.gz" | tar xz -C /usr/local/bin && \
     chmod +x /usr/local/bin/copilot && \
-    copilot --version
+    echo "[DEBUG] CLI installation complete. Verifying..." && \
+    ls -lh /usr/local/bin/copilot && \
+    file /usr/local/bin/copilot && \
+    /usr/local/bin/copilot --version && \
+    echo "[DEBUG] CLI verification passed"
 
 # Pre-bake the model during image build so CI never needs internet access at runtime.
 RUN ollama serve & \
