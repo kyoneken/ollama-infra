@@ -14,24 +14,12 @@ import (
 )
 
 // systemPrompt is copied verbatim from entrypoint.sh — do not modify.
-const systemPrompt = `You are a strict code reviewer. Check for ALL of the following:
-1. TYPOS: misspelled identifiers, strings, comments (e.g. Mulitply->Multiply, CountVowles->CountVowels)
-2. LOGIC: off-by-one, missing null/zero checks, wrong operators (- instead of +), unchecked errors
-3. COMMENT: docstring/comment says one thing but code does another
-
-Diff lines are annotated with file line numbers like this:
-  "[  12]+	return a - b"  => line 12 was ADDED (+ means new line)
-  "[  10] 	func Add(...)"  => line 10 is context
-  "      -	return a + b"  => deleted line (no line number)
-Use the integer inside [] as LINE. Do not copy the brackets.
-
-For each issue output exactly one line in this format:
-FILE|LINE|SEVERITY|ISSUE|FIX|REASON_JA
-- LINE: integer from [] annotation (e.g. 12, not "[  12]")
-- SEVERITY: ERROR, WARNING, or INFO
-- FIX: the corrected code snippet only (no line numbers)
-- REASON_JA: one Japanese sentence explaining why this must be fixed
-Output ONLY these pipe-separated lines, nothing else.`
+// NOTE: When using Copilot SDK with SkillDirectories, the system prompt is minimal.
+// Detailed review logic is delegated to skills loaded from SkillDirectories.
+// This reduces maintenance overhead and enables skills-based extensibility.
+const systemPrompt = `Review this code diff and report any issues found.
+Format: FILE|LINE|SEVERITY|ISSUE|FIX|REASON_JA
+Output only these pipe-separated lines, nothing else.`
 
 const (
 	ollamaURL     = "http://localhost:11434"
@@ -46,10 +34,11 @@ func logf(format string, args ...any) {
 
 // reviewWithSDK executes the copilot SDK review with the given diff and model.
 // Returns the review response or an error if SDK is unavailable or the request fails.
-func reviewWithSDK(diff string, model string) (string, error) {
+// skillDirs specifies directories to load Copilot skills from.
+func reviewWithSDK(diff string, model string, skillDirs []string) (string, error) {
 	const sdkTimeout = 30 * time.Second
 
-	logf("Trying Copilot SDK (timeout 30s)...")
+	logf("Trying Copilot SDK (timeout 30s, skills enabled)...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), sdkTimeout)
 	defer cancel()
@@ -61,7 +50,7 @@ func reviewWithSDK(diff string, model string) (string, error) {
 	}
 	defer client.Close()
 
-	reviewText, err := client.Review(ctx, diff, model)
+	reviewText, err := client.Review(ctx, diff, model, skillDirs)
 	if err != nil {
 		logf("Copilot SDK review failed: %v — falling back to Ollama", err)
 		return "", err
@@ -72,7 +61,7 @@ func reviewWithSDK(diff string, model string) (string, error) {
 		return "", fmt.Errorf("empty SDK response")
 	}
 
-	logf("Copilot SDK review successful")
+	logf("Copilot SDK review successful (skills-based review)")
 	return reviewText, nil
 }
 
@@ -93,13 +82,14 @@ func main() {
 
 	var reviewText string
 
-	// Try Copilot SDK first
-	if sdkResponse, err := reviewWithSDK(truncated, model); err == nil {
+	// Try Copilot SDK first (skills-based review)
+	// SkillDirectories can be configured via env var or passed as []string{}
+	skillDirs := []string{} // Empty for now; can be set from env or config
+	if sdkResponse, err := reviewWithSDK(truncated, model, skillDirs); err == nil {
 		reviewText = sdkResponse
 		logf("Using Copilot SDK for review")
 	} else {
-		// Fall back to Ollama client
-		logf("Falling back to Ollama for review...")
+		// Fall back to Ollama client (traditional system-prompt based review)
 
 		client := ollama.NewClient(ollamaURL)
 

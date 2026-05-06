@@ -10,15 +10,20 @@ import (
 
 // Review sends a code diff as a prompt to Copilot and returns the review response
 // Uses SDK session for lifecycle management and event-driven response collection
-func (rc *ReviewClient) Review(ctx context.Context, diff string, model string) (string, error) {
+// Loads skills from SkillDirectories to delegate review logic to skills
+func (rc *ReviewClient) Review(ctx context.Context, diff string, model string, skillDirs []string) (string, error) {
 	if rc.client == nil {
 		return "", fmt.Errorf("client not initialized")
 	}
 
-	// Create session with specified model
+	// Create session with Skills enabled
+	// EnableConfigDiscovery loads .mcp.json, .vscode/mcp.json, and skill directories from cwd
+	// SkillDirectories specifies additional skill directories to load
 	session, err := rc.client.CreateSession(ctx, &copilot.SessionConfig{
-		Model:               model,
-		OnPermissionRequest: copilot.PermissionHandler.ApproveAll,
+		Model:                   model,
+		SkillDirectories:        skillDirs,
+		EnableConfigDiscovery:   true,
+		OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
@@ -38,8 +43,8 @@ func (rc *ReviewClient) Review(ctx context.Context, diff string, model string) (
 		}
 	})
 
-	// Format diff as review prompt
-	prompt := fmt.Sprintf("Review this code diff and provide feedback:\n\n%s", diff)
+	// Minimal prompt - delegate to skills for actual review logic
+	prompt := fmt.Sprintf("Review this code diff:\n\n%s", diff)
 
 	// Send prompt to Copilot
 	_, err = session.Send(ctx, copilot.MessageOptions{
