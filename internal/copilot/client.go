@@ -24,11 +24,12 @@ func NewReviewClient(ctx context.Context) (*ReviewClient, error) {
 
 	// Create SDK client (bundler-managed binary)
 	client := copilot.NewClient(&copilot.ClientOptions{
-		LogLevel: "error",
+		LogLevel: "debug",
 	})
 
 	// Start SDK server (manages CLI process)
 	if err := client.Start(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "[copilot-sdk] Initialization error details:\n%+v\n", err)
 		return nil, fmt.Errorf("copilot SDK start: %w", err)
 	}
 
