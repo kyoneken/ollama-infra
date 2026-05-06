@@ -16,10 +16,21 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ca-certificates && \
+      ca-certificates \
+      curl \
+      git && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /reviewer /reviewer
+
+# Install Copilot CLI via bundler
+# The Go SDK requires CLI binary to be available in PATH
+# Using curl to fetch the latest CLI release for Linux
+RUN set -e; \
+    COPILOT_CLI_VERSION="1.0.41"; \
+    curl -sL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_CLI_VERSION}/copilot-linux-x64.tar.gz" | tar xz -C /usr/local/bin && \
+    chmod +x /usr/local/bin/copilot && \
+    copilot --version
 
 # Pre-bake the model during image build so CI never needs internet access at runtime.
 RUN ollama serve & \
