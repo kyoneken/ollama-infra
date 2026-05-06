@@ -3,6 +3,8 @@ package copilot
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	copilot "github.com/github/copilot-sdk/go"
@@ -14,6 +16,21 @@ import (
 func (rc *ReviewClient) Review(ctx context.Context, diff string, model string, skillDirs []string) (string, error) {
 	if rc.client == nil {
 		return "", fmt.Errorf("client not initialized")
+	}
+
+	// Log skill discovery status
+	if len(skillDirs) > 0 {
+		fmt.Fprintf(os.Stderr, "[copilot-sdk] SkillDirectories configured: %d directories\n", len(skillDirs))
+		for i, dir := range skillDirs {
+			absPath, _ := filepath.Abs(dir)
+			exists := "missing"
+			if _, err := os.Stat(dir); err == nil {
+				exists = "found"
+			}
+			fmt.Fprintf(os.Stderr, "[copilot-sdk]   [%d] %s (%s)\n", i+1, absPath, exists)
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "[copilot-sdk] SkillDirectories: disabled (config discovery only)\n")
 	}
 
 	// Create session with Skills enabled
