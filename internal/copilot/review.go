@@ -36,8 +36,9 @@ func (rc *ReviewClient) Review(ctx context.Context, diff string, model string, s
 	// Create session with Skills enabled
 	// EnableConfigDiscovery loads .mcp.json, .vscode/mcp.json, and skill directories from cwd
 	// SkillDirectories specifies additional skill directories to load
+	// Use empty model string to use SDK's default model (works with both GitHub and Ollama)
 	session, err := rc.client.CreateSession(ctx, &copilot.SessionConfig{
-		Model:                   model,
+		Model:                   "", // Use default model for better compatibility
 		SkillDirectories:        skillDirs,
 		EnableConfigDiscovery:   true,
 		OnPermissionRequest:     copilot.PermissionHandler.ApproveAll,
