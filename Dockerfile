@@ -2,12 +2,12 @@
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /build
-
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /reviewer ./cmd/reviewer/
+RUN CGO_ENABLED=0 GOOS=linux go build -o /test-cli ./cmd/test-cli/
 
 # Stage 2: runtime
 FROM ollama/ollama:latest
@@ -22,6 +22,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /reviewer /reviewer
+COPY --from=builder /test-cli /test-cli
 
 # Install Copilot CLI
 # The Go SDK requires CLI binary to be available in PATH
@@ -29,6 +30,12 @@ RUN set -e; \
     COPILOT_CLI_VERSION="1.0.41"; \
     curl -sL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_CLI_VERSION}/copilot-linux-x64.tar.gz" | tar xz -C /usr/local/bin && \
     chmod +x /usr/local/bin/copilot
+
+# Test CLI compatibility in Docker environment
+RUN echo "=== CLI Compatibility Test ===" && \
+    /usr/local/bin/copilot --version && \
+    echo "✓ CLI is executable" && \
+    /test-cli || echo "⚠ CLI diagnostic test failed (may be expected)"
 
 # Pre-bake the model during image build so CI never needs internet access at runtime.
 RUN ollama serve & \
