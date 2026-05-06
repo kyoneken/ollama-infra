@@ -1,10 +1,9 @@
 package copilot
 
 import (
-"context"
-"fmt"
-"os"
-"path/filepath"
+	"fmt"
+	"os"
+	"path/filepath"
 )
 
 // DiagnoseSkills logs skill directories configuration and availability
