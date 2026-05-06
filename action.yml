@@ -43,18 +43,29 @@ runs:
 
     - name: Pull Docker image
       shell: bash
-      run: docker pull ghcr.io/kyoneken/ollama-review:latest
+      run: |
+        # For feat/copilot-sdk branch testing, use the feature tag
+        IMAGE_TAG="feat-copilot-sdk"
+        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          IMAGE_TAG="latest"
+        fi
+        docker pull ghcr.io/kyoneken/ollama-review:${IMAGE_TAG}
 
     - name: Run AI code review
       shell: bash
       run: |
+        # For feat/copilot-sdk branch testing, use the feature tag
+        IMAGE_TAG="feat-copilot-sdk"
+        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          IMAGE_TAG="latest"
+        fi
         docker run --rm \
           -v "${{ github.workspace }}:/workspace" \
           -e GITHUB_TOKEN="${{ inputs.github-token }}" \
           -e GH_TOKEN="${{ inputs.github-token }}" \
           -e COPILOT_MODEL="${{ inputs.model }}" \
           -e REVIEW_OUTPUT=/workspace/review_output.txt \
-          ghcr.io/kyoneken/ollama-review:latest
+          ghcr.io/kyoneken/ollama-review:${IMAGE_TAG}
 
     - name: Post review as PR comment
       uses: actions/github-script@v7
