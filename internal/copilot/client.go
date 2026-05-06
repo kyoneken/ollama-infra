@@ -32,6 +32,12 @@ func NewReviewClient(ctx context.Context) (*ReviewClient, error) {
 		return nil, fmt.Errorf("copilot SDK start: %w", err)
 	}
 
+	// Debug: Log SDK integration info
+	fmt.Fprintf(os.Stderr, "[copilot-sdk] Integration successfully initialized\n")
+	fmt.Fprintf(os.Stderr, "[copilot-sdk] Version: github.com/github/copilot-sdk/go v0.3.0\n")
+	fmt.Fprintf(os.Stderr, "[copilot-sdk] Backend: Ollama (http://localhost:11434)\n")
+	fmt.Fprintf(os.Stderr, "[copilot-sdk] LogLevel: error\n")
+
 	return &ReviewClient{client: client}, nil
 }
 
