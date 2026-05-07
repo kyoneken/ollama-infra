@@ -16,25 +16,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      curl \
-      ca-certificates \
-      git && \
+      ca-certificates && \
     rm -rf /var/lib/apt/lists/*
-
-# Install GitHub CLI
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends gh && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install Copilot CLI
-RUN curl -fsSL https://gh.io/copilot-install | bash
 
 COPY --from=builder /reviewer /reviewer
-COPY config/copilot-config.sh /config/copilot-config.sh
-RUN chmod +x /config/copilot-config.sh
 
 # Pre-bake the model during image build so CI never needs internet access at runtime.
 RUN ollama serve & \
@@ -53,4 +38,4 @@ ENV COPILOT_MODEL=qwen2.5-coder:1.5b
 ENV COPILOT_OFFLINE=true
 ENV OLLAMA_HOST=0.0.0.0
 
-ENTRYPOINT ["/bin/bash", "-c", "source /config/copilot-config.sh && exec /reviewer"]
+ENTRYPOINT ["/reviewer"]

@@ -1,19 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/kyoneken/ollama-infra/internal/diff"
+	"github.com/kyoneken/ollama-infra/internal/ollama"
 )
 
-// systemPrompt is copied verbatim from entrypoint.sh — do not modify.
 const systemPrompt = `You are a strict code reviewer. Check for ALL of the following:
 1. TYPOS: misspelled identifiers, strings, comments (e.g. Mulitply->Multiply, CountVowles->CountVowels)
 2. LOGIC: off-by-one, missing null/zero checks, wrong operators (- instead of +), unchecked errors
@@ -34,40 +32,14 @@ FILE|LINE|SEVERITY|ISSUE|FIX|REASON_JA
 Output ONLY these pipe-separated lines, nothing else.`
 
 const (
-	maxDiffBytes = 4000
+	maxDiffBytes   = 4000
+	ollamaURL      = "http://localhost:11434"
+	ollamaTimeout  = 60 * time.Second
+	reviewTimeout  = 480 * time.Second
 )
 
 func logf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[reviewer] "+format+"\n", args...)
-}
-
-// runCopilotReview executes the copilot review command with the given diff and model.
-// Returns the review response or a fatal error if Copilot CLI is unavailable or fails.
-func runCopilotReview(diffText string, model string) (string, error) {
-	const copilotTimeout = 30 * time.Second
-
-	logf("Running Copilot CLI review (timeout 30s)...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), copilotTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "copilot", "review", "--diff", diffText, "--model", model)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("copilot CLI failed: %w (stderr: %s)", err, stderr.String())
-	}
-
-	reviewText := stdout.String()
-	if strings.TrimSpace(reviewText) == "" {
-		return "", fmt.Errorf("copilot CLI returned empty response")
-	}
-
-	logf("Copilot CLI review successful")
-	return reviewText, nil
 }
 
 func main() {
@@ -83,11 +55,43 @@ func main() {
 	truncated := diff.Truncate(annotated, maxDiffBytes)
 	logf("Diff: %d bytes (annotated), truncated to %d bytes", len(annotated), len(truncated))
 
-	// Run Copilot CLI review — no fallback, CI fails if this fails
-	reviewText, err := runCopilotReview(truncated, model)
+	client := ollama.NewClient(ollamaURL)
+
+	logf("Starting ollama serve...")
+	if err := client.Start(); err != nil {
+		log.Fatalf("start ollama: %v", err)
+	}
+	defer client.Stop()
+
+	logf("Waiting for Ollama to be ready (timeout %s)...", ollamaTimeout)
+	ctx := context.Background()
+	if err := client.WaitReady(ctx, ollamaTimeout); err != nil {
+		log.Fatalf("ollama not ready: %v", err)
+	}
+	logf("Ollama is ready.")
+
+	logf("Verifying model %s is present...", model)
+	if err := client.EnsureModel(ctx, model); err != nil {
+		log.Fatalf("ensure model %s: %v", model, err)
+	}
+
+	prompt := systemPrompt + "\n\n" + truncated
+
+	logf("Running code review (stream:true, num_predict:500, timeout %s)...", reviewTimeout)
+	reviewCtx, cancel := context.WithTimeout(ctx, reviewTimeout)
+	defer cancel()
+
+	reviewText, err := client.Generate(reviewCtx, model, prompt, ollama.GenerateOptions{
+		NumCtx:     4096,
+		NumPredict: 500,
+		Temperature: 0.1,
+	})
 	if err != nil {
 		log.Fatalf("review failed — CI halted: %v", err)
 	}
+
+	reviewText = strings.TrimSpace(reviewText)
+	logf("Using Ollama for review")
 
 	if err := os.WriteFile(outputPath, []byte(reviewText+"\n"), 0644); err != nil {
 		log.Fatalf("write output: %v", err)
