@@ -2,11 +2,12 @@ name: Build and Push Docker Image to GHCR
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/remove-ollama-fallback]
     paths:
       - 'Dockerfile'
       - 'cmd/**'
       - 'internal/**'
+      - 'action.yml'
   workflow_dispatch:
 
 permissions:
@@ -39,7 +40,8 @@ jobs:
         with:
           images: ghcr.io/kyoneken/ollama-review
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=feat-remove-ollama-fallback,enable=${{ github.ref == 'refs/heads/feat/remove-ollama-fallback' }}
             type=sha,prefix=,format=short
 
       - name: Build and push
