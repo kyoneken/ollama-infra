@@ -16,8 +16,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ca-certificates && \
+      ca-certificates \
+      curl && \
     rm -rf /var/lib/apt/lists/*
+
+# Install copilot CLI (BYOK mode: connects to Ollama's OpenAI-compatible endpoint)
+RUN curl -fsSL https://gh.io/copilot-install | bash
 
 COPY --from=builder /reviewer /reviewer
 
